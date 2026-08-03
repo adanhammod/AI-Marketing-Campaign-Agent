@@ -1,0 +1,1 @@
+"""Marketing MCP service scaffold."""

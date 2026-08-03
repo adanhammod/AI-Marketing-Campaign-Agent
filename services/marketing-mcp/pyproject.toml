@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "campaign-marketing-mcp"
+version = "0.1.0"
+description = "Marketing MCP service scaffold: typed persistence, transitions, assets, and packaging tools"
+requires-python = ">=3.12,<3.13"
+dependencies = ["campaign-contracts==0.1.0", "mcp>=1.2,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=5", "ruff>=0.12", "mypy>=1.17"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/campaign_marketing_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["campaign_marketing_mcp"]
+mypy_path = "src"
+
+[tool.coverage.run]
+source = ["campaign_marketing_mcp"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.uv.sources]
+campaign-contracts = { path = "../../shared", editable = true }
