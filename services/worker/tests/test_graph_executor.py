@@ -6,7 +6,7 @@ from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata
 from campaign_contracts.enums import CampaignStatus
 
-from campaign_worker.graph.executor import GraphExecutor, build_graph
+from campaign_worker.graph.executor import GraphExecutor, build_default_graph, build_graph
 from campaign_worker.graph.state import GraphState
 
 
@@ -87,3 +87,19 @@ async def test_executor_chains_multiple_nodes_in_order():
     executor = GraphExecutor(graph)
     await executor.run(_version())
     assert calls == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_default_graph_runs_all_six_nodes_end_to_end():
+    graph = build_default_graph()
+    executor = GraphExecutor(graph)
+    result = await executor.run(_version())
+    assert result.strategy is not None
+    assert result.campaign_copy is not None
+    assert result.storyboard is not None
+
+
+@pytest.mark.asyncio
+async def test_default_graph_uses_no_checkpointer():
+    graph = build_default_graph()
+    assert graph.checkpointer is None

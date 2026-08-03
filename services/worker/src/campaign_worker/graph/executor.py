@@ -5,6 +5,7 @@ from campaign_contracts.campaign import CampaignVersion
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from . import nodes as _nodes
 from .state import GraphState
 
 NodeFn = Callable[[GraphState], Awaitable[GraphState]]
@@ -23,6 +24,27 @@ def build_graph(nodes: dict[str, NodeFn], edges: list[tuple[str, ...]]) -> _Comp
         previous = name
     graph.add_edge(previous, END)
     return graph.compile()
+
+
+def build_default_graph() -> _CompiledGraph:
+    return build_graph(
+        nodes={
+            "receive_request": _nodes.receive_request,
+            "validate_input": _nodes.validate_input,
+            "analyze_campaign": _nodes.analyze_campaign,
+            "create_strategy": _nodes.create_strategy,
+            "generate_copy": _nodes.generate_copy,
+            "create_storyboard": _nodes.create_storyboard,
+        },
+        edges=[
+            ("receive_request",),
+            ("validate_input",),
+            ("analyze_campaign",),
+            ("create_strategy",),
+            ("generate_copy",),
+            ("create_storyboard",),
+        ],
+    )
 
 
 class GraphExecutor:
