@@ -1,13 +1,53 @@
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata
-from campaign_contracts.enums import CampaignStatus
+from campaign_contracts.enums import CampaignStatus, StepStatus, WorkflowStep
+from campaign_contracts.steps import WorkflowStepRecord
 
 from campaign_worker.graph.executor import GraphExecutor, build_default_graph, build_graph
 from campaign_worker.graph.state import GraphState
+from campaign_worker.repositories.workflow_repository import WorkflowRepository
+
+
+class _InMemoryStepRepository(WorkflowRepository):
+    def __init__(self, seed: dict[tuple, WorkflowStepRecord] | None = None) -> None:
+        self.steps: dict[tuple, WorkflowStepRecord] = dict(seed or {})
+
+    async def get_step(self, campaign_id: UUID, campaign_version: int, step: WorkflowStep) -> WorkflowStepRecord | None:
+        return self.steps.get((campaign_id, campaign_version, step))
+
+    async def save_step(self, record: WorkflowStepRecord) -> None:
+        self.steps[(record.campaign_id, record.campaign_version, record.step)] = record
+
+    async def load_version(self, message):
+        raise NotImplementedError
+
+    async def acquire_lease(self, message, owner, now, expires_at):
+        raise NotImplementedError
+
+    async def heartbeat(self, message, lease, now, expires_at):
+        raise NotImplementedError
+
+    async def is_completed(self, message):
+        raise NotImplementedError
+
+    async def complete(self, message, lease, completed_at):
+        raise NotImplementedError
+
+    async def release(self, message, lease):
+        raise NotImplementedError
+
+    async def record_exhausted(self, message, receive_count, now):
+        raise NotImplementedError
+
+    async def record_invalid(self, campaign_id, code, message_id, now):
+        raise NotImplementedError
+
+    async def available(self):
+        raise NotImplementedError
 
 
 def _brief():
@@ -22,9 +62,9 @@ def _brief():
     )
 
 
-def _version():
+def _version(**overrides):
     now = datetime.now(UTC)
-    return CampaignVersion(
+    defaults = dict(
         campaign_id=uuid4(),
         campaign_version=1,
         job_id=uuid4(),
@@ -36,6 +76,15 @@ def _version():
         created_at=now,
         updated_at=now,
         lock_version=1,
+    )
+    defaults.update(overrides)
+    return CampaignVersion(**defaults)
+
+
+def _step_record(campaign_id: UUID, step: WorkflowStep, status: StepStatus) -> WorkflowStepRecord:
+    now = datetime.now(UTC)
+    return WorkflowStepRecord(
+        campaign_id=campaign_id, campaign_version=1, step=step, status=status, created_at=now, updated_at=now
     )
 
 
@@ -91,7 +140,7 @@ async def test_executor_chains_multiple_nodes_in_order():
 
 @pytest.mark.asyncio
 async def test_default_graph_runs_all_six_nodes_end_to_end():
-    graph = build_default_graph()
+    graph = build_default_graph(_InMemoryStepRepository())
     executor = GraphExecutor(graph)
     result = await executor.run(_version())
     assert result.strategy is not None
@@ -101,5 +150,78 @@ async def test_default_graph_runs_all_six_nodes_end_to_end():
 
 @pytest.mark.asyncio
 async def test_default_graph_uses_no_checkpointer():
-    graph = build_default_graph()
+    graph = build_default_graph(_InMemoryStepRepository())
     assert graph.checkpointer is None
+
+
+@pytest.mark.asyncio
+async def test_default_graph_first_run_executes_and_persists_every_tracked_step():
+    repository = _InMemoryStepRepository()
+    version = _version()
+    graph = build_default_graph(repository)
+    executor = GraphExecutor(graph)
+    await executor.run(version)
+
+    for step in (WorkflowStep.STRATEGY, WorkflowStep.COPY, WorkflowStep.STORYBOARD):
+        record = repository.steps[(version.campaign_id, version.campaign_version, step)]
+        assert record.status == StepStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_default_graph_partial_completion_resumes_correctly():
+    version = _version()
+    sentinel_strategy = (await GraphExecutor(build_default_graph(_InMemoryStepRepository())).run(version)).strategy
+    assert sentinel_strategy is not None
+
+    # Simulate a reload after a crash: STRATEGY already succeeded and its output is
+    # already on the version (as a real reload from persisted content would provide);
+    # COPY and STORYBOARD have no STEP record yet.
+    repository = _InMemoryStepRepository(
+        seed={
+            (version.campaign_id, 1, WorkflowStep.STRATEGY): _step_record(
+                version.campaign_id, WorkflowStep.STRATEGY, StepStatus.SUCCEEDED
+            )
+        }
+    )
+    resumed_input = version.model_copy(update={"strategy": sentinel_strategy})
+    graph = build_default_graph(repository)
+    executor = GraphExecutor(graph)
+    result = await executor.run(resumed_input)
+
+    assert result.strategy == sentinel_strategy
+    assert result.campaign_copy is not None
+    assert result.storyboard is not None
+    assert repository.steps[(version.campaign_id, 1, WorkflowStep.COPY)].status == StepStatus.SUCCEEDED
+    assert repository.steps[(version.campaign_id, 1, WorkflowStep.STORYBOARD)].status == StepStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_default_graph_rerun_skips_all_completed_steps():
+    version = _version()
+    repository = _InMemoryStepRepository()
+    graph = build_default_graph(repository)
+    executor = GraphExecutor(graph)
+    first_result = await executor.run(version)
+
+    # Rerun with the same repository (all three steps now SUCCEEDED) and the
+    # first run's output already on the version, as a real reload would provide.
+    rerun_input = version.model_copy(
+        update={
+            "strategy": first_result.strategy,
+            "campaign_copy": first_result.campaign_copy,
+            "storyboard": first_result.storyboard,
+        }
+    )
+    second_result = await executor.run(rerun_input)
+
+    assert second_result.strategy == first_result.strategy
+    assert second_result.campaign_copy == first_result.campaign_copy
+    assert second_result.storyboard == first_result.storyboard
+
+
+@pytest.mark.asyncio
+async def test_graph_execution_is_deterministic():
+    version = _version()
+    first = await GraphExecutor(build_default_graph(_InMemoryStepRepository())).run(version)
+    second = await GraphExecutor(build_default_graph(_InMemoryStepRepository())).run(version)
+    assert first == second

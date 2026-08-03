@@ -128,6 +128,12 @@ class FakeRepository(WorkflowRepository):
     async def available(self):
         return self.available_value
 
+    async def get_step(self, campaign_id, campaign_version, step):
+        return None
+
+    async def save_step(self, record):
+        pass
+
 
 class StubSQS:
     def __init__(self, messages=None):

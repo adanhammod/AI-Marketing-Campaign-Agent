@@ -8,8 +8,10 @@ from uuid import UUID
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer  # type: ignore[import-untyped]
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 from campaign_contracts.campaign import CampaignVersion
-from campaign_contracts.dynamodb import meta_sk, pk, version_sk
+from campaign_contracts.dynamodb import meta_sk, pk, serialize_step, step_sk, version_sk
+from campaign_contracts.enums import WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage, duplicate_delivery_key
+from campaign_contracts.steps import WorkflowStepRecord
 
 from campaign_worker.errors import LeaseConflict, LeaseLost, PersistenceUnavailable
 
@@ -253,6 +255,23 @@ class DynamoDBWorkflowRepository(WorkflowRepository):
             return response.get("Table", {}).get("TableStatus") in {"ACTIVE", "UPDATING"}
         except ClientError:
             return False
+
+    async def get_step(self, campaign_id: UUID, campaign_version: int, step: WorkflowStep) -> WorkflowStepRecord | None:
+        item = await self._get(pk(campaign_id), step_sk(campaign_version, step))
+        if item is None:
+            return None
+        accepted = set(WorkflowStepRecord.model_fields)
+        return WorkflowStepRecord.model_validate({key: value for key, value in item.items() if key in accepted})
+
+    async def save_step(self, record: WorkflowStepRecord) -> None:
+        try:
+            await asyncio.to_thread(
+                self._client.put_item,
+                TableName=self._table_name,
+                Item=_marshal(serialize_step(record)),
+            )
+        except ClientError as exc:
+            raise PersistenceUnavailable("step persistence unavailable") from exc
 
     async def _get(self, partition: str, sort: str) -> dict[str, Any] | None:
         try:

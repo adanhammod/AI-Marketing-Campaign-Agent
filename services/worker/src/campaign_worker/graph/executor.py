@@ -2,10 +2,14 @@ from collections.abc import Awaitable, Callable
 from typing import cast
 
 from campaign_contracts.campaign import CampaignVersion
+from campaign_contracts.enums import WorkflowStep
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from campaign_worker.repositories.workflow_repository import WorkflowRepository
+
 from . import nodes as _nodes
+from .boundary import with_step_tracking
 from .state import GraphState
 
 NodeFn = Callable[[GraphState], Awaitable[GraphState]]
@@ -26,15 +30,15 @@ def build_graph(nodes: dict[str, NodeFn], edges: list[tuple[str, ...]]) -> _Comp
     return graph.compile()
 
 
-def build_default_graph() -> _CompiledGraph:
+def build_default_graph(repository: WorkflowRepository) -> _CompiledGraph:
     return build_graph(
         nodes={
             "receive_request": _nodes.receive_request,
             "validate_input": _nodes.validate_input,
             "analyze_campaign": _nodes.analyze_campaign,
-            "create_strategy": _nodes.create_strategy,
-            "generate_copy": _nodes.generate_copy,
-            "create_storyboard": _nodes.create_storyboard,
+            "create_strategy": with_step_tracking(WorkflowStep.STRATEGY, repository)(_nodes.create_strategy),
+            "generate_copy": with_step_tracking(WorkflowStep.COPY, repository)(_nodes.generate_copy),
+            "create_storyboard": with_step_tracking(WorkflowStep.STORYBOARD, repository)(_nodes.create_storyboard),
         },
         edges=[
             ("receive_request",),

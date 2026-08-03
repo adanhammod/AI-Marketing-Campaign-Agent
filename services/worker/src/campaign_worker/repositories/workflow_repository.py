@@ -4,7 +4,9 @@ from datetime import datetime
 from uuid import UUID
 
 from campaign_contracts.campaign import CampaignVersion
+from campaign_contracts.enums import WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage
+from campaign_contracts.steps import WorkflowStepRecord
 
 
 @dataclass(slots=True)
@@ -45,3 +47,11 @@ class WorkflowRepository(ABC):
 
     @abstractmethod
     async def available(self) -> bool: ...
+
+    @abstractmethod
+    async def get_step(
+        self, campaign_id: UUID, campaign_version: int, step: WorkflowStep
+    ) -> WorkflowStepRecord | None: ...
+
+    @abstractmethod
+    async def save_step(self, record: WorkflowStepRecord) -> None: ...

@@ -7,8 +7,9 @@ from boto3.dynamodb.types import TypeSerializer
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignConstraints, CampaignVersion, RetryMetadata
 from campaign_contracts.dynamodb import serialize_meta, serialize_version
-from campaign_contracts.enums import CampaignStatus, SQSOperation
+from campaign_contracts.enums import CampaignStatus, SQSOperation, StepStatus, WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage
+from campaign_contracts.steps import WorkflowStepRecord
 from moto import mock_aws
 
 from campaign_worker.errors import LeaseConflict, LeaseLost
@@ -144,3 +145,31 @@ async def test_missing_version_and_wrong_job_conflict(database):
     wrong = message.model_copy(update={"job_id": uuid4()})
     with pytest.raises(LeaseConflict):
         await repository.acquire_lease(wrong, "worker-a", datetime.now(UTC), datetime.now(UTC) + timedelta(minutes=1))
+
+
+@pytest.mark.asyncio
+async def test_save_and_get_step_round_trip(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    record = WorkflowStepRecord(
+        campaign_id=message.campaign_id,
+        campaign_version=1,
+        step=WorkflowStep.STRATEGY,
+        status=StepStatus.SUCCEEDED,
+        attempt=1,
+        created_at=now,
+        updated_at=now,
+    )
+    await repository.save_step(record)
+    fetched = await repository.get_step(message.campaign_id, 1, WorkflowStep.STRATEGY)
+    assert fetched is not None
+    assert fetched.status == StepStatus.SUCCEEDED
+    assert fetched.attempt == 1
+
+
+@pytest.mark.asyncio
+async def test_get_step_returns_none_when_absent(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    assert await repository.get_step(message.campaign_id, 1, WorkflowStep.COPY) is None
