@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 
 from . import nodes as _nodes
-from .boundary import with_step_tracking
+from .boundary import with_cancellation_check, with_step_tracking
 from .state import GraphState
 
 NodeFn = Callable[[GraphState], Awaitable[GraphState]]
@@ -30,15 +30,25 @@ def build_graph(nodes: dict[str, NodeFn], edges: list[tuple[str, ...]]) -> _Comp
     return graph.compile()
 
 
-def build_default_graph(repository: WorkflowRepository) -> _CompiledGraph:
+def build_default_graph(repository: WorkflowRepository, is_cancelled: Callable[[], Awaitable[bool]]) -> _CompiledGraph:
+    def cancellable(name: str, fn: NodeFn) -> NodeFn:
+        return with_cancellation_check(is_cancelled, name)(fn)
+
     return build_graph(
         nodes={
-            "receive_request": _nodes.receive_request,
-            "validate_input": _nodes.validate_input,
-            "analyze_campaign": _nodes.analyze_campaign,
-            "create_strategy": with_step_tracking(WorkflowStep.STRATEGY, repository)(_nodes.create_strategy),
-            "generate_copy": with_step_tracking(WorkflowStep.COPY, repository)(_nodes.generate_copy),
-            "create_storyboard": with_step_tracking(WorkflowStep.STORYBOARD, repository)(_nodes.create_storyboard),
+            "receive_request": cancellable("receive_request", _nodes.receive_request),
+            "validate_input": cancellable("validate_input", _nodes.validate_input),
+            "analyze_campaign": cancellable("analyze_campaign", _nodes.analyze_campaign),
+            "create_strategy": cancellable(
+                "create_strategy", with_step_tracking(WorkflowStep.STRATEGY, repository)(_nodes.create_strategy)
+            ),
+            "generate_copy": cancellable(
+                "generate_copy", with_step_tracking(WorkflowStep.COPY, repository)(_nodes.generate_copy)
+            ),
+            "create_storyboard": cancellable(
+                "create_storyboard",
+                with_step_tracking(WorkflowStep.STORYBOARD, repository)(_nodes.create_storyboard),
+            ),
         },
         edges=[
             ("receive_request",),

@@ -205,3 +205,66 @@ async def test_skipped_step_reuses_persisted_output_without_recomputing():
 
     assert result["version"].strategy == sentinel_strategy
     assert result["version"].strategy.audience == "PRE-PERSISTED-SENTINEL"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_check_raises_before_running_node():
+    from campaign_worker.graph.boundary import NodeCancelled, with_cancellation_check
+
+    calls: list[str] = []
+
+    async def node(state: GraphState) -> GraphState:
+        calls.append("ran")
+        return state
+
+    async def is_cancelled() -> bool:
+        return True
+
+    wrapped = with_cancellation_check(is_cancelled, "create_strategy")(node)
+    with pytest.raises(NodeCancelled, match="create_strategy"):
+        await wrapped({"version": _version()})
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancellation_check_runs_node_when_not_cancelled():
+    from campaign_worker.graph.boundary import with_cancellation_check
+
+    calls: list[str] = []
+
+    async def node(state: GraphState) -> GraphState:
+        calls.append("ran")
+        return state
+
+    async def is_cancelled() -> bool:
+        return False
+
+    wrapped = with_cancellation_check(is_cancelled, "create_strategy")(node)
+    await wrapped({"version": _version()})
+
+    assert calls == ["ran"]
+
+
+@pytest.mark.asyncio
+async def test_cancellation_check_composes_with_step_tracking():
+    from campaign_worker.graph.boundary import with_cancellation_check
+
+    repository = FakeStepRepository()
+    calls: list[str] = []
+
+    async def node(state: GraphState) -> GraphState:
+        calls.append("ran")
+        return state
+
+    async def is_cancelled() -> bool:
+        return True
+
+    tracked = with_step_tracking(WorkflowStep.STRATEGY, repository)(node)
+    wrapped = with_cancellation_check(is_cancelled, "create_strategy")(tracked)
+
+    with pytest.raises(Exception, match="create_strategy"):
+        await wrapped({"version": _version()})
+
+    assert calls == []
+    assert repository.save_calls == []

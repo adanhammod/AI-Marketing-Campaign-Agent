@@ -88,6 +88,10 @@ def _step_record(campaign_id: UUID, step: WorkflowStep, status: StepStatus) -> W
     )
 
 
+async def _never_cancelled() -> bool:
+    return False
+
+
 @pytest.mark.asyncio
 async def test_executor_runs_graph_and_returns_updated_version():
     async def passthrough(state: GraphState) -> GraphState:
@@ -140,7 +144,7 @@ async def test_executor_chains_multiple_nodes_in_order():
 
 @pytest.mark.asyncio
 async def test_default_graph_runs_all_six_nodes_end_to_end():
-    graph = build_default_graph(_InMemoryStepRepository())
+    graph = build_default_graph(_InMemoryStepRepository(), _never_cancelled)
     executor = GraphExecutor(graph)
     result = await executor.run(_version())
     assert result.strategy is not None
@@ -150,7 +154,7 @@ async def test_default_graph_runs_all_six_nodes_end_to_end():
 
 @pytest.mark.asyncio
 async def test_default_graph_uses_no_checkpointer():
-    graph = build_default_graph(_InMemoryStepRepository())
+    graph = build_default_graph(_InMemoryStepRepository(), _never_cancelled)
     assert graph.checkpointer is None
 
 
@@ -158,7 +162,7 @@ async def test_default_graph_uses_no_checkpointer():
 async def test_default_graph_first_run_executes_and_persists_every_tracked_step():
     repository = _InMemoryStepRepository()
     version = _version()
-    graph = build_default_graph(repository)
+    graph = build_default_graph(repository, _never_cancelled)
     executor = GraphExecutor(graph)
     await executor.run(version)
 
@@ -170,7 +174,9 @@ async def test_default_graph_first_run_executes_and_persists_every_tracked_step(
 @pytest.mark.asyncio
 async def test_default_graph_partial_completion_resumes_correctly():
     version = _version()
-    sentinel_strategy = (await GraphExecutor(build_default_graph(_InMemoryStepRepository())).run(version)).strategy
+    sentinel_strategy = (
+        await GraphExecutor(build_default_graph(_InMemoryStepRepository(), _never_cancelled)).run(version)
+    ).strategy
     assert sentinel_strategy is not None
 
     # Simulate a reload after a crash: STRATEGY already succeeded and its output is
@@ -184,7 +190,7 @@ async def test_default_graph_partial_completion_resumes_correctly():
         }
     )
     resumed_input = version.model_copy(update={"strategy": sentinel_strategy})
-    graph = build_default_graph(repository)
+    graph = build_default_graph(repository, _never_cancelled)
     executor = GraphExecutor(graph)
     result = await executor.run(resumed_input)
 
@@ -199,7 +205,7 @@ async def test_default_graph_partial_completion_resumes_correctly():
 async def test_default_graph_rerun_skips_all_completed_steps():
     version = _version()
     repository = _InMemoryStepRepository()
-    graph = build_default_graph(repository)
+    graph = build_default_graph(repository, _never_cancelled)
     executor = GraphExecutor(graph)
     first_result = await executor.run(version)
 
@@ -222,6 +228,19 @@ async def test_default_graph_rerun_skips_all_completed_steps():
 @pytest.mark.asyncio
 async def test_graph_execution_is_deterministic():
     version = _version()
-    first = await GraphExecutor(build_default_graph(_InMemoryStepRepository())).run(version)
-    second = await GraphExecutor(build_default_graph(_InMemoryStepRepository())).run(version)
+    first = await GraphExecutor(build_default_graph(_InMemoryStepRepository(), _never_cancelled)).run(version)
+    second = await GraphExecutor(build_default_graph(_InMemoryStepRepository(), _never_cancelled)).run(version)
     assert first == second
+
+
+@pytest.mark.asyncio
+async def test_default_graph_raises_node_cancelled_when_cancellation_flagged():
+    from campaign_worker.graph.boundary import NodeCancelled
+
+    async def always_cancelled() -> bool:
+        return True
+
+    graph = build_default_graph(_InMemoryStepRepository(), always_cancelled)
+    executor = GraphExecutor(graph)
+    with pytest.raises(NodeCancelled, match="receive_request"):
+        await executor.run(_version())

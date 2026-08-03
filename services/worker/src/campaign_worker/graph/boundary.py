@@ -49,3 +49,21 @@ def with_step_tracking(step: WorkflowStep, repository: WorkflowRepository) -> Ca
         return wrapped
 
     return decorator
+
+
+class NodeCancelled(Exception):
+    def __init__(self, step: str) -> None:
+        super().__init__(f"node cancelled before running: {step}")
+        self.step = step
+
+
+def with_cancellation_check(is_cancelled: Callable[[], Awaitable[bool]], step: str) -> Callable[[NodeFn], NodeFn]:
+    def decorator(fn: NodeFn) -> NodeFn:
+        async def wrapped(state: GraphState) -> GraphState:
+            if await is_cancelled():
+                raise NodeCancelled(step)
+            return await fn(state)
+
+        return wrapped
+
+    return decorator
