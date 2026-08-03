@@ -1,6 +1,4 @@
 import asyncio
-import builtins
-from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -212,72 +210,6 @@ class DynamoDBCampaignRepository(CampaignRepository):
                 raise InvalidStateTransition("initial campaign is no longer rollback-safe") from None
             raise RepositoryFailure("campaign rollback unavailable") from None
 
-    async def acquire_processing_lease(
-        self, campaign_id: UUID, version: int, owner: str, now: datetime, expires_at: datetime
-    ) -> None:
-        values = {
-            ":version": _SERIALIZER.serialize(version),
-            ":owner": _SERIALIZER.serialize(owner),
-            ":now": _SERIALIZER.serialize(now.isoformat().replace("+00:00", "Z")),
-            ":expires": _SERIALIZER.serialize(expires_at.isoformat().replace("+00:00", "Z")),
-            ":one": _SERIALIZER.serialize(1),
-        }
-        transaction = [
-            {
-                "ConditionCheck": {
-                    "TableName": self._table_name,
-                    "Key": _marshal_item({"PK": pk(campaign_id), "SK": meta_sk()}),
-                    "ConditionExpression": "current_version=:version",
-                    "ExpressionAttributeValues": {":version": values[":version"]},
-                }
-            },
-            {
-                "Update": {
-                    "TableName": self._table_name,
-                    "Key": _marshal_item({"PK": pk(campaign_id), "SK": version_sk(version)}),
-                    "UpdateExpression": (
-                        "SET lease_owner=:owner, lease_acquired_at=:now, lease_expires_at=:expires, "
-                        "lease_heartbeat_at=:now ADD lock_version :one"
-                    ),
-                    "ConditionExpression": (
-                        "attribute_not_exists(lease_expires_at) OR lease_expires_at < :now OR lease_owner=:owner"
-                    ),
-                    "ExpressionAttributeValues": {key: values[key] for key in (":owner", ":now", ":expires", ":one")},
-                }
-            },
-        ]
-        await self._lease_transaction(transaction, "processing lease conflict")
-
-    async def heartbeat_processing_lease(
-        self,
-        campaign_id: UUID,
-        version: int,
-        owner: str,
-        expected_lock_version: int,
-        now: datetime,
-        expires_at: datetime,
-    ) -> None:
-        values = {
-            ":owner": _SERIALIZER.serialize(owner),
-            ":lock": _SERIALIZER.serialize(expected_lock_version),
-            ":now": _SERIALIZER.serialize(now.isoformat().replace("+00:00", "Z")),
-            ":expires": _SERIALIZER.serialize(expires_at.isoformat().replace("+00:00", "Z")),
-            ":one": _SERIALIZER.serialize(1),
-        }
-        try:
-            await asyncio.to_thread(
-                self._client.update_item,
-                TableName=self._table_name,
-                Key=_marshal_item({"PK": pk(campaign_id), "SK": version_sk(version)}),
-                UpdateExpression="SET lease_heartbeat_at=:now, lease_expires_at=:expires ADD lock_version :one",
-                ConditionExpression="lease_owner=:owner AND lease_expires_at>=:now AND lock_version=:lock",
-                ExpressionAttributeValues=values,
-            )
-        except ClientError as exc:
-            if self._is_conditional(exc):
-                raise InvalidStateTransition("processing lease heartbeat conflict") from None
-            raise RepositoryFailure("processing lease update unavailable") from None
-
     async def available(self) -> bool:
         try:
             response = await asyncio.to_thread(self._client.describe_table, TableName=self._table_name)
@@ -300,14 +232,6 @@ class DynamoDBCampaignRepository(CampaignRepository):
             raise RepositoryFailure("campaign read unavailable") from None
         raw = response.get("Item")
         return None if raw is None else _unmarshal_item(raw)
-
-    async def _lease_transaction(self, transaction: builtins.list[dict[str, Any]], conflict_message: str) -> None:
-        try:
-            await asyncio.to_thread(self._client.transact_write_items, TransactItems=transaction)
-        except ClientError as exc:
-            if self._is_conditional(exc):
-                raise InvalidStateTransition(conflict_message) from None
-            raise RepositoryFailure("processing lease unavailable") from None
 
     @staticmethod
     def _is_conditional(exc: ClientError) -> bool:

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import boto3
@@ -154,30 +154,6 @@ async def test_guarded_rollback(repository):
     )
     with pytest.raises(InvalidStateTransition):
         await repository.rollback_initial(aggregate.campaign_id)
-
-
-@pytest.mark.asyncio
-async def test_processing_lease_conflict_and_heartbeat(repository, dynamodb):
-    aggregate, version = records()
-    await repository.create_initial(aggregate, version)
-    now = datetime.now(UTC)
-    expires = now + timedelta(minutes=2)
-    await repository.acquire_processing_lease(aggregate.campaign_id, 1, "worker-a", now, expires)
-    item = dynamodb.get_item(
-        TableName=TABLE,
-        Key={"PK": {"S": f"CAMPAIGN#{aggregate.campaign_id}"}, "SK": {"S": "VERSION#1"}},
-        ConsistentRead=True,
-    )["Item"]
-    assert item["lease_owner"]["S"] == "worker-a" and item["lock_version"]["N"] == "1"
-    with pytest.raises(InvalidStateTransition):
-        await repository.acquire_processing_lease(aggregate.campaign_id, 1, "worker-b", now, expires)
-    await repository.heartbeat_processing_lease(
-        aggregate.campaign_id, 1, "worker-a", 1, now + timedelta(seconds=5), expires + timedelta(seconds=5)
-    )
-    item = dynamodb.get_item(
-        TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{aggregate.campaign_id}"}, "SK": {"S": "VERSION#1"}}
-    )["Item"]
-    assert item["lock_version"]["N"] == "2"
 
 
 @pytest.mark.asyncio
