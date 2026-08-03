@@ -8,6 +8,9 @@ __pycache__/
 .venv/
 venv/
 
+# Per-package lockfiles (not committed anywhere in this repo today)
+uv.lock
+
 # Test / coverage / type-check / lint caches
 .pytest_cache/
 .mypy_cache/

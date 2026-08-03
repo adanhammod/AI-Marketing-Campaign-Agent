@@ -11,6 +11,7 @@ from .campaign import (
 )
 from .enums import WorkflowStep
 from .events import CampaignEvent
+from .steps import WorkflowStepRecord
 
 
 def pk(campaign_id: UUID) -> str:
@@ -84,12 +85,5 @@ def serialize_approval(a: ApprovalRecord):
     return serialize(a, "APPROVAL", approval_sk(a.campaign_version))
 
 
-def serialize_step(
-    campaign_id: UUID, version: int, step: WorkflowStep, payload: dict[str, Any]
-):
-    return {
-        "PK": pk(campaign_id),
-        "SK": step_sk(version, step),
-        "entity_type": "WORKFLOW_STEP",
-        **_ddb(payload),
-    }
+def serialize_step(step: WorkflowStepRecord) -> dict[str, Any]:
+    return serialize(step, "WORKFLOW_STEP", step_sk(step.campaign_version, step.step))

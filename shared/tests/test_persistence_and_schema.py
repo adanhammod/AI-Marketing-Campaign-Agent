@@ -6,9 +6,10 @@ from uuid import UUID
 import pytest
 from campaign_contracts.campaign import CampaignAggregateMetadata,CampaignVersion
 from campaign_contracts.dynamodb import approval_sk,event_sk,meta_sk,pk,serialize_event,serialize_meta,serialize_step,serialize_version,step_sk,version_sk,_ddb
-from campaign_contracts.enums import CampaignStatus,WorkflowStep
+from campaign_contracts.enums import CampaignStatus,StepStatus,WorkflowStep
 from campaign_contracts.events import CampaignEvent
 from campaign_contracts.schema_generation import SCHEMAS,generate
+from campaign_contracts.steps import WorkflowStepRecord
 ROOT=Path(__file__).parents[1]
 def load(name):return json.loads((ROOT/'fixtures'/'valid'/name).read_text(encoding='utf-8-sig'))
 def test_keys_and_serialization(tmp_path):
@@ -16,7 +17,8 @@ def test_keys_and_serialization(tmp_path):
     with pytest.raises(ValueError):version_sk(0)
     with pytest.raises(ValueError):event_sk(0,eid)
     version=CampaignVersion.model_validate(load('queued-campaign.json')); item=serialize_version(version); assert item['SK']=='VERSION#1'; assert isinstance(item['campaign_version'],Decimal); assert not any(isinstance(x,float) for x in item.values())
-    now=datetime(2026,7,28,tzinfo=timezone.utc); meta=CampaignAggregateMetadata(campaign_id=cid,current_version=1,title='x',created_at=now,updated_at=now,lock_version=1); assert serialize_meta(meta)['SK']=='META'; assert serialize_step(cid,1,WorkflowStep.COPY,{'attempt':1})['attempt']==Decimal(1)
+    now=datetime(2026,7,28,tzinfo=timezone.utc); meta=CampaignAggregateMetadata(campaign_id=cid,current_version=1,title='x',created_at=now,updated_at=now,lock_version=1); assert serialize_meta(meta)['SK']=='META'
+    step_record=WorkflowStepRecord(campaign_id=cid,campaign_version=1,step=WorkflowStep.COPY,status=StepStatus.SUCCEEDED,attempt=1,created_at=now,updated_at=now); assert serialize_step(step_record)['attempt']==Decimal(1) and serialize_step(step_record)['SK']=='STEP#1#copy'
     with pytest.raises(TypeError):_ddb(1.2)
 def test_event_serialize_and_schema_stability(tmp_path):
     event=CampaignEvent.model_validate(load('events.json')[0]); assert serialize_event(event)['SK'].startswith('EVENT#'); first=generate(tmp_path); snapshots={p.name:p.read_bytes() for p in first}; second=generate(tmp_path); assert snapshots=={p.name:p.read_bytes() for p in second}; assert len(first)==8
