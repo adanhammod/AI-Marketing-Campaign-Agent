@@ -1,0 +1,153 @@
+{
+  "$defs": {
+    "ArtifactType": {
+      "enum": [
+        "REFERENCE_IMAGE",
+        "IMAGE",
+        "AUDIO",
+        "VIDEO",
+        "STORYBOARD",
+        "MANIFEST",
+        "REVIEW_PACKAGE",
+        "FINAL_PACKAGE",
+        "PROVIDER_DIAGNOSTIC"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "WorkflowStep": {
+      "enum": [
+        "strategy",
+        "copy",
+        "storyboard",
+        "images",
+        "video",
+        "package"
+      ],
+      "title": "WorkflowStep",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "format": "uuid",
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "campaign_id": {
+      "format": "uuid",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "campaign_version": {
+      "minimum": 1,
+      "title": "Campaign Version",
+      "type": "integer"
+    },
+    "checksum_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Checksum Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "generation_summary": {
+      "additionalProperties": true,
+      "title": "Generation Summary",
+      "type": "object"
+    },
+    "mime_type": {
+      "maxLength": 100,
+      "minLength": 3,
+      "title": "Mime Type",
+      "type": "string"
+    },
+    "presigned_url_expires_at": {
+      "default": null,
+      "title": "Presigned Url Expires At",
+      "type": "null"
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "maxLength": 80,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider"
+    },
+    "provider_artifact_id": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Artifact Id"
+    },
+    "s3_bucket": {
+      "maxLength": 63,
+      "minLength": 3,
+      "title": "S3 Bucket",
+      "type": "string"
+    },
+    "s3_key": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "S3 Key",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "size_bytes": {
+      "minimum": 0,
+      "title": "Size Bytes",
+      "type": "integer"
+    },
+    "storage_namespace": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Storage Namespace",
+      "type": "string"
+    },
+    "workflow_step": {
+      "$ref": "#/$defs/WorkflowStep"
+    }
+  },
+  "required": [
+    "artifact_id",
+    "artifact_type",
+    "campaign_id",
+    "campaign_version",
+    "workflow_step",
+    "storage_namespace",
+    "s3_bucket",
+    "s3_key",
+    "mime_type",
+    "size_bytes",
+    "checksum_sha256",
+    "created_at"
+  ],
+  "title": "ArtifactReference",
+  "type": "object"
+}

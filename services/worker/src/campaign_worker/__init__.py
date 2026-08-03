@@ -1,0 +1,1 @@
+"""Campaign worker transport boundary."""

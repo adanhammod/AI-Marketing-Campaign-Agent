@@ -1,0 +1,167 @@
+{
+  "$defs": {
+    "Actor": {
+      "enum": [
+        "FASTAPI",
+        "LANGGRAPH_WORKER",
+        "DEMO_USER",
+        "SYSTEM"
+      ],
+      "title": "Actor",
+      "type": "string"
+    },
+    "CampaignEventType": {
+      "enum": [
+        "CAMPAIGN_CREATED",
+        "JOB_QUEUED",
+        "STATUS_CHANGED",
+        "STEP_STARTED",
+        "STEP_COMPLETED",
+        "STEP_REUSED",
+        "RETRY_SCHEDULED",
+        "PROVIDER_CALL_STARTED",
+        "PROVIDER_CALL_COMPLETED",
+        "PROVIDER_FALLBACK_USED",
+        "REVIEW_READY",
+        "REVISION_REQUESTED",
+        "APPROVED",
+        "FINALIZED",
+        "CANCEL_REQUESTED",
+        "CANCELLED",
+        "FAILED",
+        "LATE_PROVIDER_RESULT_DISCARDED"
+      ],
+      "title": "CampaignEventType",
+      "type": "string"
+    },
+    "CampaignStatus": {
+      "enum": [
+        "CREATED",
+        "QUEUED",
+        "GENERATING_STRATEGY",
+        "GENERATING_COPY",
+        "GENERATING_STORYBOARD",
+        "GENERATING_IMAGES",
+        "RENDERING_VIDEO",
+        "READY_FOR_REVIEW",
+        "REVISION_REQUESTED",
+        "APPROVED",
+        "FINAL",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "title": "CampaignStatus",
+      "type": "string"
+    },
+    "WorkflowStep": {
+      "enum": [
+        "strategy",
+        "copy",
+        "storyboard",
+        "images",
+        "video",
+        "package"
+      ],
+      "title": "WorkflowStep",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "actor": {
+      "$ref": "#/$defs/Actor"
+    },
+    "campaign_id": {
+      "format": "uuid",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "campaign_version": {
+      "minimum": 1,
+      "title": "Campaign Version",
+      "type": "integer"
+    },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "details": {
+      "additionalProperties": true,
+      "title": "Details",
+      "type": "object"
+    },
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_sequence": {
+      "minimum": 1,
+      "title": "Event Sequence",
+      "type": "integer"
+    },
+    "event_type": {
+      "$ref": "#/$defs/CampaignEventType"
+    },
+    "job_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Job Id"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "progress_percent": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Progress Percent",
+      "type": "integer"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CampaignStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "step": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowStep"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "event_id",
+    "campaign_id",
+    "campaign_version",
+    "event_sequence",
+    "event_type",
+    "progress_percent",
+    "occurred_at",
+    "actor",
+    "correlation_id"
+  ],
+  "title": "CampaignEvent",
+  "type": "object"
+}

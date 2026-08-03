@@ -1,0 +1,197 @@
+{
+  "$defs": {
+    "ErrorComponent": {
+      "enum": [
+        "FASTAPI",
+        "LANGGRAPH_WORKER",
+        "MARKETING_MCP",
+        "IMAGE_MCP",
+        "HYPERFRAMES_MCP",
+        "BEDROCK",
+        "DYNAMODB",
+        "S3",
+        "SQS",
+        "PACKAGER",
+        "UNKNOWN"
+      ],
+      "title": "ErrorComponent",
+      "type": "string"
+    },
+    "ProviderStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Category",
+          "type": "string"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "maximum": 599,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Http Status"
+        },
+        "provider": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "provider_code": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Code"
+        }
+      },
+      "required": [
+        "provider",
+        "category"
+      ],
+      "title": "ProviderStatus",
+      "type": "object"
+    },
+    "WorkflowStep": {
+      "enum": [
+        "strategy",
+        "copy",
+        "storyboard",
+        "images",
+        "video",
+        "package"
+      ],
+      "title": "WorkflowStep",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt": {
+      "minimum": 1,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "campaign_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Campaign Id"
+    },
+    "campaign_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Campaign Version"
+    },
+    "code": {
+      "title": "Code",
+      "type": "string"
+    },
+    "component": {
+      "$ref": "#/$defs/ErrorComponent"
+    },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "job_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Job Id"
+    },
+    "message": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "provider_status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProviderStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "retryable": {
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "workflow_step": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowStep"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "code",
+    "message",
+    "component",
+    "attempt",
+    "retryable",
+    "timestamp",
+    "correlation_id"
+  ],
+  "title": "SanitizedWorkflowError",
+  "type": "object"
+}

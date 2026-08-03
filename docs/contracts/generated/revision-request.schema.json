@@ -1,0 +1,41 @@
+{
+  "$defs": {
+    "RevisionTarget": {
+      "enum": [
+        "STRATEGY",
+        "COPY",
+        "STORYBOARD",
+        "SELECTED_IMAGES",
+        "VIDEO"
+      ],
+      "title": "RevisionTarget",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "affected_artifact_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Affected Artifact Ids",
+      "type": "array"
+    },
+    "reason": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/RevisionTarget"
+    }
+  },
+  "required": [
+    "reason",
+    "scope"
+  ],
+  "title": "RevisionRequest",
+  "type": "object"
+}

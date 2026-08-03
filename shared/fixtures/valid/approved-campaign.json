@@ -1,0 +1,68 @@
+{
+    "schema_version":  1,
+    "completed_steps":  [
+
+                        ],
+    "parent_version":  null,
+    "copy":  null,
+    "error":  null,
+    "created_at":  "2026-07-28T09:00:00Z",
+    "lock_version":  0,
+    "current_step":  "package",
+    "strategy":  null,
+    "constraints":  {
+                        "scene_count":  3,
+                        "video_codec":  "H.264",
+                        "target_duration_seconds":  15,
+                        "preferred_resolution":  "1080x1920",
+                        "max_duration_seconds":  17,
+                        "min_duration_seconds":  13,
+                        "image_count":  3,
+                        "output_format":  "MP4",
+                        "audio_codec":  "AAC",
+                        "fallback_resolution":  "720x1280",
+                        "aspect_ratio":  "9:16"
+                    },
+    "checkpoint_version":  0,
+    "storyboard":  null,
+    "status":  "APPROVED",
+    "campaign_version":  1,
+    "brief":  {
+                  "product_or_service":  "Cold brew subscription",
+                  "target_audience":  "Professionals aged 25-40",
+                  "call_to_action":  null,
+                  "key_message":  null,
+                  "language":  "en-US",
+                  "business_name":  "Example Coffee",
+                  "brand_colors":  [
+                                       "#4B2E2A"
+                                   ],
+                  "platforms":  [
+                                    "instagram"
+                                ],
+                  "business_description":  "A local roaster offering weekly delivery.",
+                  "reference_artifact_id":  null,
+                  "tone":  "energetic",
+                  "campaign_goal":  "increase_sales"
+              },
+    "campaign_id":  "018f0000-0000-7000-8000-000000000001",
+    "review_package":  null,
+    "revision":  null,
+    "image_artifacts":  [
+
+                        ],
+    "video_artifact":  null,
+    "updated_at":  "2026-07-28T09:00:01Z",
+    "approval":  null,
+    "retry":  {
+                  "attempt":  0,
+                  "resume_step":  null,
+                  "retryable":  false,
+                  "max_attempts":  3
+              },
+    "image_prompts":  [
+
+                      ],
+    "progress_percent":  98,
+    "job_id":  "018f0000-0000-7000-8000-000000000003"
+}

@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "RevisionTarget": {
+      "enum": [
+        "STRATEGY",
+        "COPY",
+        "STORYBOARD",
+        "SELECTED_IMAGES",
+        "VIDEO"
+      ],
+      "title": "RevisionTarget",
+      "type": "string"
+    },
+    "SQSOperation": {
+      "enum": [
+        "START",
+        "RESUME",
+        "REGENERATE"
+      ],
+      "title": "SQSOperation",
+      "type": "string"
+    },
+    "WorkflowStep": {
+      "enum": [
+        "strategy",
+        "copy",
+        "storyboard",
+        "images",
+        "video",
+        "package"
+      ],
+      "title": "WorkflowStep",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt": {
+      "minimum": 0,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "campaign_id": {
+      "format": "uuid",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "campaign_version": {
+      "minimum": 1,
+      "title": "Campaign Version",
+      "type": "integer"
+    },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[ -~]+$",
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "job_id": {
+      "format": "uuid",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "operation": {
+      "$ref": "#/$defs/SQSOperation"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "requested_step": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowStep"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "revision_scope": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RevisionTarget"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schema_version": {
+      "minimum": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "trace_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trace Id"
+    }
+  },
+  "required": [
+    "schema_version",
+    "job_id",
+    "campaign_id",
+    "campaign_version",
+    "operation",
+    "idempotency_key",
+    "correlation_id",
+    "requested_at",
+    "attempt"
+  ],
+  "title": "SQSJobMessage",
+  "type": "object"
+}

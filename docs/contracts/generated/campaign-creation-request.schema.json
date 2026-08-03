@@ -1,0 +1,121 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "brand_colors": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 5,
+      "title": "Brand Colors",
+      "type": "array"
+    },
+    "business_description": {
+      "maxLength": 2000,
+      "minLength": 20,
+      "title": "Business Description",
+      "type": "string"
+    },
+    "business_name": {
+      "maxLength": 120,
+      "minLength": 2,
+      "title": "Business Name",
+      "type": "string"
+    },
+    "call_to_action": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Call To Action"
+    },
+    "campaign_goal": {
+      "maxLength": 300,
+      "minLength": 3,
+      "title": "Campaign Goal",
+      "type": "string"
+    },
+    "key_message": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Key Message"
+    },
+    "language": {
+      "maxLength": 20,
+      "minLength": 2,
+      "title": "Language",
+      "type": "string"
+    },
+    "platforms": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 5,
+      "minItems": 1,
+      "title": "Platforms",
+      "type": "array"
+    },
+    "product_or_service": {
+      "maxLength": 200,
+      "minLength": 2,
+      "title": "Product Or Service",
+      "type": "string"
+    },
+    "reference_artifact_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference Artifact Id"
+    },
+    "target_audience": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Audience"
+    },
+    "tone": {
+      "maxLength": 80,
+      "minLength": 2,
+      "title": "Tone",
+      "type": "string"
+    }
+  },
+  "required": [
+    "business_name",
+    "product_or_service",
+    "business_description",
+    "campaign_goal",
+    "platforms",
+    "tone",
+    "language"
+  ],
+  "title": "CampaignCreationRequest",
+  "type": "object"
+}
