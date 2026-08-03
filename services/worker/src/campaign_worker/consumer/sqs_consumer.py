@@ -119,18 +119,24 @@ class SQSConsumer:
             except PersistenceUnavailable:
                 _LOG.warning("retry_exhaustion_persistence_failed")
                 return MessageOutcome.UNCERTAIN
-            _LOG.warning("delivery_retry_exhausted campaign=%s job=%s", message.campaign_id, message.job_id)
+            _LOG.warning(
+                "delivery_retry_exhausted",
+                extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)},
+            )
             return MessageOutcome.RETRY_EXHAUSTED
         version = await self._repository.load_version(message)
         if version is None:
-            _LOG.warning("campaign_version_unavailable campaign=%s job=%s", message.campaign_id, message.job_id)
+            _LOG.warning(
+                "campaign_version_unavailable",
+                extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)},
+            )
             return MessageOutcome.UNCERTAIN
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self._settings.visibility_timeout_seconds - 1)
         try:
             lease = await self._repository.acquire_lease(message, self._worker_id, now, expires)
         except LeaseConflict:
-            _LOG.info("lease_conflict campaign=%s job=%s", message.campaign_id, message.job_id)
+            _LOG.info("lease_conflict", extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)})
             return MessageOutcome.LEASE_CONFLICT
         if await self._repository.is_completed(message):
             try:
@@ -189,12 +195,16 @@ class SQSConsumer:
                 failures = 0
             except LeaseLost:
                 lost.set()
-                _LOG.warning("lease_lost campaign=%s job=%s", received.job.campaign_id, received.job.job_id)
+                _LOG.warning(
+                    "lease_lost",
+                    extra={"campaign_id": str(received.job.campaign_id), "job_id": str(received.job.job_id)},
+                )
                 return
             except (ClientError, BotoCoreError, PersistenceUnavailable):
                 failures += 1
                 _LOG.warning(
-                    "visibility_heartbeat_failed campaign=%s job=%s", received.job.campaign_id, received.job.job_id
+                    "visibility_heartbeat_failed",
+                    extra={"campaign_id": str(received.job.campaign_id), "job_id": str(received.job.job_id)},
                 )
                 if failures >= 2:
                     lost.set()
