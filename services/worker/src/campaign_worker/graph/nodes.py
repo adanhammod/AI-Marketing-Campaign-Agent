@@ -7,8 +7,8 @@ from campaign_contracts.campaign import (
     StrategyOutput,
 )
 
-from campaign_worker.providers.base import ImageProvider, VoiceProvider
-from campaign_worker.providers.models import ImageGenerationRequest
+from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
+from campaign_worker.providers.models import ImageGenerationRequest, VideoRenderRequest
 from campaign_worker.providers.voice_models import VoiceGenerationRequest
 
 from .boundary import NodeFn
@@ -129,3 +129,30 @@ def make_generate_voiceover_node(provider: VoiceProvider) -> NodeFn:
         return {"version": version, "voice_artifact": result.artifact}
 
     return generate_voiceover
+
+
+def make_render_video_node(provider: VideoProvider) -> NodeFn:
+    async def render_video(state: GraphState) -> GraphState:
+        version = state["version"]
+        storyboard = version.storyboard
+        if storyboard is None:
+            raise ValueError("render_video requires create_storyboard to have run first")
+        if not version.image_artifacts:
+            raise ValueError("render_video requires generate_images to have run first")
+        voice_artifact = state.get("voice_artifact")
+        if voice_artifact is None:
+            raise ValueError("render_video requires generate_voiceover to have run first")
+        request = VideoRenderRequest(
+            campaign_id=version.campaign_id,
+            campaign_version=version.campaign_version,
+            storyboard=storyboard,
+            image_artifacts=version.image_artifacts,
+            voice_artifact=voice_artifact,
+            aspect_ratio=version.constraints.aspect_ratio,
+        )
+        result = await provider.render_video(request)
+        if result.artifact is None:
+            raise ValueError(f"video rendering failed: {result.error}")
+        return {"version": version.model_copy(update={"video_artifact": result.artifact})}
+
+    return render_video

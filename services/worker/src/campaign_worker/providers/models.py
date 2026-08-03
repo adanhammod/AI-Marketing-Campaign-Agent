@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from campaign_contracts.artifacts import ImageArtifactReference, VideoArtifactReference
+from campaign_contracts.artifacts import ImageArtifactReference, PublicArtifactReference, VideoArtifactReference
 from campaign_contracts.campaign import ImagePrompt, Storyboard
 from campaign_contracts.errors import SanitizedWorkflowError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -41,6 +41,7 @@ class VideoRenderRequest(BaseModel):
     campaign_version: int = Field(ge=1)
     storyboard: Storyboard
     image_artifacts: list[ImageArtifactReference] = Field(default_factory=list)
+    voice_artifact: PublicArtifactReference | None = None
     aspect_ratio: str = Field(default=_ASPECT_RATIO_9_16, pattern=r"^9:16$")
 
 

@@ -4,9 +4,9 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from campaign_contracts.artifacts import ImageArtifactReference
+from campaign_contracts.artifacts import ImageArtifactReference, PublicArtifactReference
 from campaign_contracts.campaign import Storyboard, StoryboardScene
-from campaign_contracts.enums import ArtifactType
+from campaign_contracts.enums import ArtifactType, WorkflowStep
 
 from campaign_worker.providers.base import VideoProvider
 from campaign_worker.providers.mock_video_provider import MockVideoProvider
@@ -43,16 +43,34 @@ def _image_artifact(campaign_id, campaign_version=1) -> ImageArtifactReference:
     )
 
 
+def _voice_artifact(campaign_id=None) -> PublicArtifactReference:
+    now = datetime.now(UTC)
+    return PublicArtifactReference(
+        artifact_id=uuid4(),
+        artifact_type=ArtifactType.AUDIO,
+        campaign_id=campaign_id or uuid4(),
+        campaign_version=1,
+        workflow_step=WorkflowStep.VIDEO,
+        mime_type="audio/mpeg",
+        size_bytes=2048,
+        checksum_sha256="c" * 64,
+        created_at=now,
+        provider="mock-voice-provider",
+    )
+
+
 def _request(**overrides):
     campaign_id = overrides.pop("campaign_id", uuid4())
     campaign_version = overrides.pop("campaign_version", 1)
     storyboard = overrides.pop("storyboard", _storyboard())
     image_artifacts = overrides.pop("image_artifacts", [])
+    voice_artifact = overrides.pop("voice_artifact", None)
     return VideoRenderRequest(
         campaign_id=campaign_id,
         campaign_version=campaign_version,
         storyboard=storyboard,
         image_artifacts=image_artifacts,
+        voice_artifact=voice_artifact,
     )
 
 
@@ -150,6 +168,25 @@ async def test_mock_video_provider_produces_different_checksum_for_different_ima
     )
     # Each _image_artifact() call mints a distinct artifact_id, so the image signature differs.
     assert first.artifact.checksum_sha256 != second.artifact.checksum_sha256
+
+
+@pytest.mark.asyncio
+async def test_mock_video_provider_produces_different_checksum_for_different_voice_artifact():
+    provider = MockVideoProvider()
+    campaign_id = uuid4()
+    first = await provider.render_video(_request(campaign_id=campaign_id, voice_artifact=_voice_artifact(campaign_id)))
+    second = await provider.render_video(_request(campaign_id=campaign_id, voice_artifact=_voice_artifact(campaign_id)))
+    # Each _voice_artifact() call mints a distinct artifact_id, so the voice signature differs.
+    assert first.artifact.checksum_sha256 != second.artifact.checksum_sha256
+
+
+@pytest.mark.asyncio
+async def test_mock_video_provider_produces_same_checksum_when_voice_artifact_is_absent_both_times():
+    provider = MockVideoProvider()
+    request = _request()
+    first = await provider.render_video(request)
+    second = await provider.render_video(request)
+    assert first.artifact.checksum_sha256 == second.artifact.checksum_sha256
 
 
 @pytest.mark.asyncio

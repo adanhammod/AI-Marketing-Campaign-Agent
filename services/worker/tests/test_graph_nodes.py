@@ -11,10 +11,16 @@ from campaign_contracts.steps import WorkflowStepRecord
 from campaign_worker.graph import nodes
 from campaign_worker.graph.boundary import with_step_tracking
 from campaign_worker.graph.state import GraphState
-from campaign_worker.providers.base import ImageProvider, VoiceProvider
+from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.mock_image_provider import MockImageProvider
+from campaign_worker.providers.mock_video_provider import MockVideoProvider
 from campaign_worker.providers.mock_voice_provider import MockVoiceProvider
-from campaign_worker.providers.models import ImageGenerationRequest, ImageGenerationResult
+from campaign_worker.providers.models import (
+    ImageGenerationRequest,
+    ImageGenerationResult,
+    VideoRenderRequest,
+    VideoRenderResult,
+)
 from campaign_worker.providers.voice_models import VoiceGenerationRequest, VoiceGenerationResult
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 
@@ -411,3 +417,167 @@ async def test_generate_voiceover_is_provider_agnostic():
 
     assert mock_artifact.checksum_sha256 == counting_artifact.checksum_sha256
     assert counting_provider.calls == 1
+
+
+async def _state_with_images_and_voice() -> GraphState:
+    version = await _version_with_storyboard()
+    images_result = await nodes.make_generate_images_node(MockImageProvider())({"version": version})
+    voice_result = await nodes.make_generate_voiceover_node(MockVoiceProvider())({"version": version})
+    return {"version": images_result["version"], "voice_artifact": voice_result["voice_artifact"]}
+
+
+class _AlwaysFailsVideoProvider(VideoProvider):
+    async def render_video(self, request: VideoRenderRequest) -> VideoRenderResult:
+        now = datetime.now(UTC)
+        error = SanitizedWorkflowError(
+            code="VIDEO_PROVIDER_UNAVAILABLE",
+            message="unavailable",
+            component="UNKNOWN",
+            attempt=1,
+            retryable=True,
+            timestamp=now,
+            correlation_id=uuid4(),
+        )
+        return VideoRenderResult(
+            provider="always-fails", fallback_asset=False, started_at=now, completed_at=now, error=error
+        )
+
+
+class _CountingMockVideoProvider(VideoProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+        self.received_requests: list[VideoRenderRequest] = []
+        self._delegate = MockVideoProvider()
+
+    async def render_video(self, request: VideoRenderRequest) -> VideoRenderResult:
+        self.calls += 1
+        self.received_requests.append(request)
+        return await self._delegate.render_video(request)
+
+
+@pytest.mark.asyncio
+async def test_render_video_requires_prior_storyboard():
+    state: GraphState = {"version": _version()}
+    node = nodes.make_render_video_node(MockVideoProvider())
+    with pytest.raises(ValueError, match="create_storyboard"):
+        await node(state)
+
+
+@pytest.mark.asyncio
+async def test_render_video_requires_prior_generate_images():
+    version = await _version_with_storyboard()
+    voice_result = await nodes.make_generate_voiceover_node(MockVoiceProvider())({"version": version})
+    state: GraphState = {"version": version, "voice_artifact": voice_result["voice_artifact"]}
+    node = nodes.make_render_video_node(MockVideoProvider())
+    with pytest.raises(ValueError, match="generate_images"):
+        await node(state)
+
+
+@pytest.mark.asyncio
+async def test_render_video_requires_prior_generate_voiceover():
+    version = await _version_with_storyboard()
+    images_result = await nodes.make_generate_images_node(MockImageProvider())({"version": version})
+    node = nodes.make_render_video_node(MockVideoProvider())
+    with pytest.raises(ValueError, match="generate_voiceover"):
+        await node({"version": images_result["version"]})
+
+
+@pytest.mark.asyncio
+async def test_render_video_produces_video_artifact_persisted_on_campaign_version():
+    state = await _state_with_images_and_voice()
+    node = nodes.make_render_video_node(MockVideoProvider())
+
+    result = await node(state)
+
+    video_artifact = result["version"].video_artifact
+    assert video_artifact is not None
+    assert video_artifact.campaign_id == state["version"].campaign_id
+    assert video_artifact.campaign_version == state["version"].campaign_version
+
+
+@pytest.mark.asyncio
+async def test_render_video_forwards_voice_artifact_to_the_provider_request():
+    state = await _state_with_images_and_voice()
+    provider = _CountingMockVideoProvider()
+    node = nodes.make_render_video_node(provider)
+
+    await node(state)
+
+    assert provider.received_requests[0].voice_artifact == state["voice_artifact"]
+
+
+@pytest.mark.asyncio
+async def test_render_video_is_deterministic_with_mock_provider():
+    state = await _state_with_images_and_voice()
+    node = nodes.make_render_video_node(MockVideoProvider())
+
+    first = await node(state)
+    second = await node(state)
+
+    assert first["version"].video_artifact.checksum_sha256 == second["version"].video_artifact.checksum_sha256
+
+
+@pytest.mark.asyncio
+async def test_render_video_propagates_provider_failure():
+    state = await _state_with_images_and_voice()
+    node = nodes.make_render_video_node(_AlwaysFailsVideoProvider())
+    with pytest.raises(ValueError, match="video rendering failed"):
+        await node(state)
+
+
+@pytest.mark.asyncio
+async def test_render_video_is_provider_agnostic():
+    state = await _state_with_images_and_voice()
+
+    async def run_with(provider: VideoProvider):
+        node = nodes.make_render_video_node(provider)
+        result = await node(state)
+        return result["version"].video_artifact
+
+    mock_artifact = await run_with(MockVideoProvider())
+    counting_provider = _CountingMockVideoProvider()
+    counting_artifact = await run_with(counting_provider)
+
+    assert mock_artifact.checksum_sha256 == counting_artifact.checksum_sha256
+    assert counting_provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_render_video_wrapped_with_step_tracking_runs_on_first_execution():
+    state = await _state_with_images_and_voice()
+    repository = _FakeStepRepositoryForGenerateImages()
+    provider = _CountingMockVideoProvider()
+    wrapped = with_step_tracking(WorkflowStep.VIDEO, repository)(nodes.make_render_video_node(provider))
+
+    result = await wrapped(state)
+
+    assert provider.calls == 1
+    assert result["version"].video_artifact is not None
+    assert [record.status for record in repository.save_calls] == [StepStatus.RUNNING, StepStatus.SUCCEEDED]
+
+
+@pytest.mark.asyncio
+async def test_render_video_wrapped_with_step_tracking_skips_when_already_succeeded():
+    state = await _state_with_images_and_voice()
+    version = state["version"]
+    now = datetime.now(UTC)
+    repository = _FakeStepRepositoryForGenerateImages(
+        seed={
+            (version.campaign_id, version.campaign_version, WorkflowStep.VIDEO): WorkflowStepRecord(
+                campaign_id=version.campaign_id,
+                campaign_version=version.campaign_version,
+                step=WorkflowStep.VIDEO,
+                status=StepStatus.SUCCEEDED,
+                created_at=now,
+                updated_at=now,
+            )
+        }
+    )
+    provider = _CountingMockVideoProvider()
+    wrapped = with_step_tracking(WorkflowStep.VIDEO, repository)(nodes.make_render_video_node(provider))
+
+    result = await wrapped(state)
+
+    assert provider.calls == 0
+    assert result["version"].video_artifact == version.video_artifact
+    assert repository.save_calls == []

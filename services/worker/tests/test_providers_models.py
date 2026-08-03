@@ -65,6 +65,34 @@ def test_video_render_request_rejects_non_9_16_aspect_ratio():
         VideoRenderRequest(campaign_id=uuid4(), campaign_version=1, storyboard=_storyboard(), aspect_ratio="16:9")
 
 
+def test_video_render_request_defaults_voice_artifact_to_none():
+    request = VideoRenderRequest(campaign_id=uuid4(), campaign_version=1, storyboard=_storyboard())
+    assert request.voice_artifact is None
+
+
+def test_video_render_request_accepts_voice_artifact():
+    from campaign_contracts.artifacts import PublicArtifactReference
+    from campaign_contracts.enums import ArtifactType, WorkflowStep
+
+    now = datetime.now(UTC)
+    voice_artifact = PublicArtifactReference(
+        artifact_id=uuid4(),
+        artifact_type=ArtifactType.AUDIO,
+        campaign_id=uuid4(),
+        campaign_version=1,
+        workflow_step=WorkflowStep.VIDEO,
+        mime_type="audio/mpeg",
+        size_bytes=2048,
+        checksum_sha256="c" * 64,
+        created_at=now,
+        provider="mock-voice-provider",
+    )
+    request = VideoRenderRequest(
+        campaign_id=uuid4(), campaign_version=1, storyboard=_storyboard(), voice_artifact=voice_artifact
+    )
+    assert request.voice_artifact is voice_artifact
+
+
 def test_image_generation_result_accepts_successful_artifact():
     from campaign_contracts.artifacts import ImageArtifactReference
 

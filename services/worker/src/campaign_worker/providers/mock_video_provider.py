@@ -16,7 +16,10 @@ class MockVideoProvider(VideoProvider):
         started_at = datetime.now(UTC)
         scene_signature = "|".join(f"{scene.scene_number}:{scene.visual_prompt}" for scene in request.storyboard.scenes)
         image_signature = "|".join(str(artifact.artifact_id) for artifact in request.image_artifacts)
-        signature = f"{request.campaign_id}:{request.campaign_version}:{scene_signature}:{image_signature}"
+        voice_signature = str(request.voice_artifact.artifact_id) if request.voice_artifact else ""
+        signature = (
+            f"{request.campaign_id}:{request.campaign_version}:{scene_signature}:{image_signature}:{voice_signature}"
+        )
         checksum = hashlib.sha256(signature.encode()).hexdigest()
         artifact = VideoArtifactReference(
             artifact_id=uuid4(),
