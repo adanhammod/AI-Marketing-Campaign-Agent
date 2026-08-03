@@ -1,5 +1,16 @@
-from campaign_contracts.campaign import CampaignCopy, ChannelCopy, Storyboard, StoryboardScene, StrategyOutput
+from campaign_contracts.campaign import (
+    CampaignCopy,
+    ChannelCopy,
+    ImagePrompt,
+    Storyboard,
+    StoryboardScene,
+    StrategyOutput,
+)
 
+from campaign_worker.providers.base import ImageProvider
+from campaign_worker.providers.models import ImageGenerationRequest
+
+from .boundary import NodeFn
 from .state import GraphState
 
 
@@ -72,3 +83,28 @@ async def create_storyboard(state: GraphState) -> GraphState:
     ]
     storyboard = Storyboard(scenes=scenes, total_duration_seconds=15)
     return {"version": version.model_copy(update={"storyboard": storyboard})}
+
+
+def make_generate_images_node(provider: ImageProvider) -> NodeFn:
+    async def generate_images(state: GraphState) -> GraphState:
+        version = state["version"]
+        storyboard = version.storyboard
+        if storyboard is None:
+            raise ValueError("generate_images requires create_storyboard to have run first")
+        artifacts = []
+        for scene in storyboard.scenes:
+            prompt = ImagePrompt(
+                scene_number=scene.scene_number,
+                prompt=scene.visual_prompt,
+                aspect_ratio=version.constraints.aspect_ratio,
+            )
+            request = ImageGenerationRequest(
+                campaign_id=version.campaign_id, campaign_version=version.campaign_version, prompt=prompt
+            )
+            result = await provider.generate_image(request)
+            if result.artifact is None:
+                raise ValueError(f"image generation failed for scene {scene.scene_number}: {result.error}")
+            artifacts.append(result.artifact)
+        return {"version": version.model_copy(update={"image_artifacts": artifacts})}
+
+    return generate_images

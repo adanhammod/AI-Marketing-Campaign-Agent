@@ -3,12 +3,28 @@ from pathlib import Path
 
 SRC = Path(__file__).parents[1] / "src" / "campaign_worker"
 
+# The graph layer MAY import the provider abstraction and its typed contracts
+# (campaign_worker.providers.base / .models / .voice_models) -- that is the whole
+# point of dependency injection: nodes depend on ImageProvider/VideoProvider/
+# VoiceProvider, never on a specific transport or a specific concrete class.
+#
+# The graph layer MUST NOT import:
+#   - any transport/implementation library a real provider would use, or
+#   - any concrete provider implementation, including the mocks -- a mock is
+#     still one specific implementation; the graph must stay agnostic to which
+#     one is injected, so it may never import a mock module by name.
 FORBIDDEN_IMPORTS_IN_NODES = {
-    "campaign_worker.providers",
     "mcp",
     "httpx",
-    "subprocess",
     "boto3",
+    "botocore",
+    "subprocess",
+    "socket",
+    "urllib",
+    "requests",
+    "campaign_worker.providers.mock_image_provider",
+    "campaign_worker.providers.mock_video_provider",
+    "campaign_worker.providers.mock_voice_provider",
 }
 
 SENSITIVE_SUBSTRINGS = {
@@ -32,7 +48,7 @@ def _imported_module_names(path: Path) -> set[str]:
     return names
 
 
-def test_graph_nodes_do_not_import_any_provider_or_transport_library():
+def test_graph_nodes_never_import_transport_libraries_or_concrete_providers():
     imported = _imported_module_names(SRC / "graph" / "nodes.py")
     for forbidden in FORBIDDEN_IMPORTS_IN_NODES:
         assert not any(name == forbidden or name.startswith(forbidden + ".") for name in imported), (
@@ -40,12 +56,24 @@ def test_graph_nodes_do_not_import_any_provider_or_transport_library():
         )
 
 
-def test_graph_executor_does_not_import_provider_transport_libraries():
-    # The executor may import the WorkflowRepository abstraction but never a concrete
-    # provider transport (mcp SDK, httpx, subprocess) -- those stay inside providers/.
+def test_graph_nodes_may_import_the_provider_abstraction():
+    # The inverse of the test above: proves the allowlisted modules really are
+    # importable from graph/nodes.py today, so this boundary is exercised by real
+    # code, not just permitted in principle.
+    imported = _imported_module_names(SRC / "graph" / "nodes.py")
+    allowed = {"campaign_worker.providers.base", "campaign_worker.providers.models"}
+    assert imported & allowed, f"expected graph/nodes.py to import at least one of {allowed}, found {imported}"
+
+
+def test_graph_executor_never_imports_transport_libraries_or_concrete_providers():
+    # The executor may import the WorkflowRepository and provider abstractions but
+    # never a concrete provider transport or implementation -- those stay inside
+    # providers/ and get chosen at composition time (Task 21), not here.
     imported = _imported_module_names(SRC / "graph" / "executor.py")
-    for forbidden in ("mcp", "httpx", "subprocess"):
-        assert not any(name == forbidden or name.startswith(forbidden + ".") for name in imported)
+    for forbidden in FORBIDDEN_IMPORTS_IN_NODES:
+        assert not any(name == forbidden or name.startswith(forbidden + ".") for name in imported), (
+            f"graph/executor.py must not import {forbidden!r}, found in {imported}"
+        )
 
 
 def test_provider_source_files_contain_no_sensitive_text_literals():
