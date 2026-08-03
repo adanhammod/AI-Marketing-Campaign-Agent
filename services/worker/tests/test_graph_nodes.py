@@ -11,9 +11,11 @@ from campaign_contracts.steps import WorkflowStepRecord
 from campaign_worker.graph import nodes
 from campaign_worker.graph.boundary import with_step_tracking
 from campaign_worker.graph.state import GraphState
-from campaign_worker.providers.base import ImageProvider
+from campaign_worker.providers.base import ImageProvider, VoiceProvider
 from campaign_worker.providers.mock_image_provider import MockImageProvider
+from campaign_worker.providers.mock_voice_provider import MockVoiceProvider
 from campaign_worker.providers.models import ImageGenerationRequest, ImageGenerationResult
+from campaign_worker.providers.voice_models import VoiceGenerationRequest, VoiceGenerationResult
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 
 
@@ -300,3 +302,112 @@ async def test_generate_images_wrapped_with_step_tracking_skips_when_already_suc
     assert provider.calls == 0
     assert result["version"].image_artifacts == version.image_artifacts
     assert repository.save_calls == []
+
+
+class _AlwaysFailsVoiceProvider(VoiceProvider):
+    async def generate_voice(self, request: VoiceGenerationRequest) -> VoiceGenerationResult:
+        now = datetime.now(UTC)
+        error = SanitizedWorkflowError(
+            code="INTERNAL_ERROR",
+            message="unavailable",
+            component="UNKNOWN",
+            attempt=1,
+            retryable=True,
+            timestamp=now,
+            correlation_id=uuid4(),
+        )
+        return VoiceGenerationResult(
+            provider="always-fails", fallback_asset=False, started_at=now, completed_at=now, error=error
+        )
+
+
+class _CountingMockVoiceProvider(VoiceProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+        self.received_requests: list[VoiceGenerationRequest] = []
+        self._delegate = MockVoiceProvider()
+
+    async def generate_voice(self, request: VoiceGenerationRequest) -> VoiceGenerationResult:
+        self.calls += 1
+        self.received_requests.append(request)
+        return await self._delegate.generate_voice(request)
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_requires_prior_storyboard():
+    state: GraphState = {"version": _version()}
+    node = nodes.make_generate_voiceover_node(MockVoiceProvider())
+    with pytest.raises(ValueError, match="create_storyboard"):
+        await node(state)
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_produces_a_voice_artifact_in_graph_state():
+    version = await _version_with_storyboard()
+    node = nodes.make_generate_voiceover_node(MockVoiceProvider())
+
+    result = await node({"version": version})
+
+    voice_artifact = result["voice_artifact"]
+    assert voice_artifact.campaign_id == version.campaign_id
+    assert voice_artifact.campaign_version == version.campaign_version
+    assert voice_artifact.artifact_type.value == "AUDIO"
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_does_not_persist_to_campaign_version():
+    version = await _version_with_storyboard()
+    node = nodes.make_generate_voiceover_node(MockVoiceProvider())
+
+    result = await node({"version": version})
+
+    assert result["version"] is version
+    assert not hasattr(result["version"], "voice_artifact")
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_combines_narration_from_all_scenes():
+    version = await _version_with_storyboard()
+    provider = _CountingMockVoiceProvider()
+    node = nodes.make_generate_voiceover_node(provider)
+
+    await node({"version": version})
+
+    expected_narration = " ".join(scene.narration for scene in version.storyboard.scenes)
+    assert provider.received_requests[0].narration_text == expected_narration
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_is_deterministic_with_mock_provider():
+    version = await _version_with_storyboard()
+    node = nodes.make_generate_voiceover_node(MockVoiceProvider())
+
+    first = await node({"version": version})
+    second = await node({"version": version})
+
+    assert first["voice_artifact"].checksum_sha256 == second["voice_artifact"].checksum_sha256
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_propagates_provider_failure():
+    version = await _version_with_storyboard()
+    node = nodes.make_generate_voiceover_node(_AlwaysFailsVoiceProvider())
+    with pytest.raises(ValueError, match="voice generation failed"):
+        await node({"version": version})
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_is_provider_agnostic():
+    version = await _version_with_storyboard()
+
+    async def run_with(provider: VoiceProvider):
+        node = nodes.make_generate_voiceover_node(provider)
+        result = await node({"version": version})
+        return result["voice_artifact"]
+
+    mock_artifact = await run_with(MockVoiceProvider())
+    counting_provider = _CountingMockVoiceProvider()
+    counting_artifact = await run_with(counting_provider)
+
+    assert mock_artifact.checksum_sha256 == counting_artifact.checksum_sha256
+    assert counting_provider.calls == 1

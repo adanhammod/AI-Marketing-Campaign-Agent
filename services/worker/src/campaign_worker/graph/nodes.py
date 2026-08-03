@@ -7,8 +7,9 @@ from campaign_contracts.campaign import (
     StrategyOutput,
 )
 
-from campaign_worker.providers.base import ImageProvider
+from campaign_worker.providers.base import ImageProvider, VoiceProvider
 from campaign_worker.providers.models import ImageGenerationRequest
+from campaign_worker.providers.voice_models import VoiceGenerationRequest
 
 from .boundary import NodeFn
 from .state import GraphState
@@ -108,3 +109,23 @@ def make_generate_images_node(provider: ImageProvider) -> NodeFn:
         return {"version": version.model_copy(update={"image_artifacts": artifacts})}
 
     return generate_images
+
+
+def make_generate_voiceover_node(provider: VoiceProvider) -> NodeFn:
+    async def generate_voiceover(state: GraphState) -> GraphState:
+        version = state["version"]
+        storyboard = version.storyboard
+        if storyboard is None:
+            raise ValueError("generate_voiceover requires create_storyboard to have run first")
+        narration_text = " ".join(scene.narration for scene in storyboard.scenes)
+        request = VoiceGenerationRequest(
+            campaign_id=version.campaign_id,
+            campaign_version=version.campaign_version,
+            narration_text=narration_text,
+        )
+        result = await provider.generate_voice(request)
+        if result.artifact is None:
+            raise ValueError(f"voice generation failed: {result.error}")
+        return {"version": version, "voice_artifact": result.artifact}
+
+    return generate_voiceover
