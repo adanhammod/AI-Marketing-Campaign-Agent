@@ -10,6 +10,7 @@ class Settings:
     api_prefix: str = "/api/v1"
     max_page_size: int = 100
     dynamodb_table_name: str = "campaign-agent-local"
+    repository_backend: str = "memory"
     queue_backend: str = "memory"
     aws_region: str | None = None
     sqs_queue_url: str | None = None
@@ -17,6 +18,8 @@ class Settings:
     sqs_endpoint_url: str | None = None
 
     def validate(self) -> None:
+        if self.repository_backend not in {"memory", "dynamodb"}:
+            raise ValueError("REPOSITORY_BACKEND must be memory or dynamodb")
         if self.queue_backend not in {"memory", "sqs"}:
             raise ValueError("QUEUE_BACKEND must be memory or sqs")
         if self.sqs_request_timeout_seconds <= 0:
@@ -41,6 +44,7 @@ class Settings:
             api_prefix=prefix.rstrip("/"),
             max_page_size=size,
             dynamodb_table_name=os.getenv("DYNAMODB_TABLE_NAME", "campaign-agent-local"),
+            repository_backend=os.getenv("REPOSITORY_BACKEND", "memory").lower(),
             queue_backend=os.getenv("QUEUE_BACKEND", "memory").lower(),
             aws_region=os.getenv("AWS_REGION"),
             sqs_queue_url=os.getenv("SQS_QUEUE_URL"),

@@ -13,7 +13,7 @@ from campaign_api.errors import configure_logging, register_error_handlers
 from campaign_api.queue.factory import create_job_queue
 from campaign_api.queue.job_queue import JobQueue
 from campaign_api.repositories.campaign_repository import CampaignRepository
-from campaign_api.repositories.in_memory_campaign_repository import InMemoryCampaignRepository
+from campaign_api.repositories.factory import create_repository
 from campaign_api.routers.campaigns import router as campaigns_router
 
 
@@ -31,7 +31,7 @@ def create_app(
     configure_logging(resolved.log_level)
     app = FastAPI(title="Campaign Control Plane", version="0.1.0")
     app.state.settings = resolved
-    app.state.repository = repository or InMemoryCampaignRepository()
+    app.state.repository = repository or create_repository(resolved)
     app.state.queue = queue or create_job_queue(resolved)
 
     @app.middleware("http")
