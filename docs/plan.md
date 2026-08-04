@@ -306,6 +306,7 @@ The following were confirmed through an architecture review conducted after Task
 - Reconciling this document's Section 7 folder-layout plan (`agent/`, `marketing-mcp/`, `LangGraph worker/`) against the actual repository layout (`services/api`, `services/worker`, plus a new Marketing MCP service directory) — low priority, cosmetic.
 - Collapsing the duplicate Feature Checklist (Section 8) and Master TODO List (Section 18) into one tracking surface — low priority.
 - CORS, container hardening (non-root/read-only images), and CI secret/dependency/container/IaC scanning — correctly deferred until their prerequisites (frontend, Dockerfiles, CI pipeline) exist; tracked here so they are not dropped once those land.
+- `docs/contracts/api-contracts.md`'s `GET /campaigns` section describes cursor-based pagination (`next_cursor`), but the implemented endpoint (`services/api/src/campaign_api/routers/campaigns.py`) uses `offset`/`limit`, per ADR-021's approved decision to keep offset-based pagination. The contract doc's prose needs updating to match the implementation — documentation drift, not an implementation bug. Discovered while scoping the Frontend History screen (2026-08-04); low priority, does not block frontend work, which is proceeding against the actual offset/limit implementation.
 
 ## 6. Four-Week Implementation Plan
 
