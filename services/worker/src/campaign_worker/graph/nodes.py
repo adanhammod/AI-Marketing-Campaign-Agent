@@ -1,4 +1,5 @@
 import hashlib
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from campaign_contracts.campaign import (
@@ -10,13 +11,14 @@ from campaign_contracts.campaign import (
     StoryboardScene,
     StrategyOutput,
 )
-from campaign_contracts.enums import CampaignStatus
+from campaign_contracts.enums import CampaignStatus, ErrorComponent, WorkflowStep
+from campaign_contracts.errors import SanitizedWorkflowError
 
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.models import ImageGenerationRequest, VideoRenderRequest
 from campaign_worker.providers.voice_models import VoiceGenerationRequest
 
-from .boundary import NodeFn
+from .boundary import NodeCancelled, NodeFn
 from .state import GraphState, ReviewPackageValidationResult
 
 
@@ -210,4 +212,58 @@ async def prepare_final_package(state: GraphState) -> GraphState:
     review_package = ReviewPackage(artifact_id=uuid4(), manifest_checksum=manifest_checksum, artifact_ids=artifact_ids)
 
     updated_version = version.model_copy(update={"review_package": review_package, "status": CampaignStatus.FINAL})
+    return {**state, "version": updated_version}
+
+
+async def handle_failure(state: GraphState, error: BaseException, *, step: WorkflowStep | None = None) -> GraphState:
+    version = state["version"]
+    now = datetime.now(UTC)
+
+    if isinstance(error, NodeCancelled):
+        sanitized_error = SanitizedWorkflowError(
+            code="CANCELLED_BY_USER",
+            message=str(error)[:500],
+            component=ErrorComponent.LANGGRAPH_WORKER,
+            workflow_step=step,
+            attempt=max(version.retry.attempt, 1),
+            retryable=False,
+            timestamp=now,
+            correlation_id=uuid4(),
+            campaign_id=version.campaign_id,
+            campaign_version=version.campaign_version,
+            job_id=version.job_id,
+        )
+        updated_version = version.model_copy(
+            update={
+                "status": CampaignStatus.CANCELLED,
+                "error": sanitized_error,
+                "retry": version.retry.model_copy(update={"retryable": False}),
+            }
+        )
+        return {**state, "version": updated_version}
+
+    next_attempt = version.retry.attempt + 1
+    exhausted = next_attempt >= version.retry.max_attempts
+    sanitized_error = SanitizedWorkflowError(
+        code="RETRY_EXHAUSTED" if exhausted else "INTERNAL_ERROR",
+        message=str(error)[:500],
+        component=ErrorComponent.LANGGRAPH_WORKER,
+        workflow_step=step,
+        attempt=next_attempt,
+        retryable=not exhausted,
+        timestamp=now,
+        correlation_id=uuid4(),
+        campaign_id=version.campaign_id,
+        campaign_version=version.campaign_version,
+        job_id=version.job_id,
+    )
+    updated_version = version.model_copy(
+        update={
+            "status": CampaignStatus.FAILED,
+            "error": sanitized_error,
+            "retry": version.retry.model_copy(
+                update={"attempt": next_attempt, "retryable": not exhausted, "resume_step": step}
+            ),
+        }
+    )
     return {**state, "version": updated_version}

@@ -6,12 +6,12 @@ from uuid import UUID, uuid4
 import pytest
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata
-from campaign_contracts.enums import CampaignStatus, StepStatus, WorkflowStep
+from campaign_contracts.enums import CampaignStatus, ErrorComponent, StepStatus, WorkflowStep
 from campaign_contracts.errors import SanitizedWorkflowError
 from campaign_contracts.steps import WorkflowStepRecord
 
 from campaign_worker.graph import nodes
-from campaign_worker.graph.boundary import with_step_tracking
+from campaign_worker.graph.boundary import NodeCancelled, with_step_tracking
 from campaign_worker.graph.state import GraphState
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.mock_image_provider import MockImageProvider
@@ -775,3 +775,115 @@ async def test_await_human_approval_never_loops_sleeps_or_polls():
         )
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             assert node.func.attr != "sleep", "await_human_approval must not busy-wait"
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_transitions_to_failed_for_a_generic_error():
+    version = await _final_version()
+    state: GraphState = {"version": version}
+
+    result = await nodes.handle_failure(state, ValueError("boom"), step=WorkflowStep.VIDEO)
+
+    assert result["version"].status == CampaignStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_transitions_to_cancelled_for_node_cancelled():
+    version = await _final_version()
+    state: GraphState = {"version": version}
+
+    result = await nodes.handle_failure(state, NodeCancelled("video"), step=WorkflowStep.VIDEO)
+
+    assert result["version"].status == CampaignStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_marks_retryable_when_budget_remains():
+    version = await _final_version()
+    version = version.model_copy(update={"retry": RetryMetadata(attempt=0, max_attempts=3)})
+    state: GraphState = {"version": version}
+
+    result = await nodes.handle_failure(state, ValueError("transient"), step=WorkflowStep.VIDEO)
+
+    assert result["version"].retry.attempt == 1
+    assert result["version"].retry.retryable is True
+    assert result["version"].error.code == "INTERNAL_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_marks_not_retryable_when_budget_exhausted():
+    version = await _final_version()
+    version = version.model_copy(update={"retry": RetryMetadata(attempt=2, max_attempts=3)})
+    state: GraphState = {"version": version}
+
+    result = await nodes.handle_failure(state, ValueError("still failing"), step=WorkflowStep.VIDEO)
+
+    assert result["version"].retry.attempt == 3
+    assert result["version"].retry.retryable is False
+    assert result["version"].error.code == "RETRY_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_cancellation_is_never_retryable_regardless_of_budget():
+    version = await _final_version()
+    version = version.model_copy(update={"retry": RetryMetadata(attempt=0, max_attempts=3)})
+    state: GraphState = {"version": version}
+
+    result = await nodes.handle_failure(state, NodeCancelled("video"), step=WorkflowStep.VIDEO)
+
+    assert result["version"].retry.retryable is False
+    assert result["version"].retry.attempt == 0
+    assert result["version"].error.code == "CANCELLED_BY_USER"
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_records_resume_step():
+    version = await _final_version()
+    state: GraphState = {"version": version}
+
+    result = await nodes.handle_failure(state, ValueError("boom"), step=WorkflowStep.VIDEO)
+
+    assert result["version"].retry.resume_step == WorkflowStep.VIDEO
+    assert result["version"].error.workflow_step == WorkflowStep.VIDEO
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_records_a_sanitized_error_with_the_message_and_component():
+    version = await _final_version()
+    state: GraphState = {"version": version}
+
+    result = await nodes.handle_failure(state, ValueError("boom"), step=WorkflowStep.VIDEO)
+
+    error = result["version"].error
+    assert error is not None
+    assert error.message == "boom"
+    assert error.component == ErrorComponent.LANGGRAPH_WORKER
+    assert error.campaign_id == version.campaign_id
+    assert error.campaign_version == version.campaign_version
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_preserves_all_existing_content():
+    version = await _final_version()
+    state: GraphState = {"version": version}
+
+    result = await nodes.handle_failure(state, ValueError("boom"), step=WorkflowStep.VIDEO)
+
+    updated = result["version"]
+    assert updated.strategy == version.strategy
+    assert updated.campaign_copy == version.campaign_copy
+    assert updated.storyboard == version.storyboard
+    assert updated.image_artifacts == version.image_artifacts
+    assert updated.video_artifact == version.video_artifact
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_never_loops_sleeps_or_retries():
+    source = inspect.getsource(nodes.handle_failure)
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        assert not isinstance(node, (ast.While, ast.For, ast.AsyncFor)), (
+            f"handle_failure must not loop/poll/retry, found {type(node).__name__}"
+        )
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            assert node.func.attr != "sleep", "handle_failure must not busy-wait"
