@@ -7,6 +7,7 @@ from campaign_contracts.enums import SQSOperation, WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage
 
 from campaign_worker.graph import nodes
+from campaign_worker.graph.boundary import NodeFailure
 from campaign_worker.graph.executor import _CompiledGraph, build_resume_graph, build_start_graph
 from campaign_worker.graph.state import GraphState
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
@@ -72,7 +73,8 @@ class GraphJobProcessor(JobProcessor):
                 await self._repository.save_version(current, lease)
             return ProcessingResult(completed=True, marker=f"{message.operation.value}_COMPLETED")
         except BaseException as exc:
-            return await self._fail(current, exc, lease, step=None)
+            step, error = (exc.step, exc.error) if isinstance(exc, NodeFailure) else (None, exc)
+            return await self._fail(current, error, lease, step=step)
 
     def _build_graph(self, operation: SQSOperation) -> _CompiledGraph:
         if operation == SQSOperation.START:

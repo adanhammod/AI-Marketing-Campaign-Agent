@@ -10,11 +10,16 @@ from campaign_contracts.sqs import SQSJobMessage
 
 from campaign_worker.config import Settings
 from campaign_worker.consumer.sqs_consumer import MessageOutcome, SQSConsumer
-from campaign_worker.providers.base import ImageProvider
+from campaign_worker.providers.base import ImageProvider, VideoProvider
 from campaign_worker.providers.mock_image_provider import MockImageProvider
 from campaign_worker.providers.mock_video_provider import MockVideoProvider
 from campaign_worker.providers.mock_voice_provider import MockVoiceProvider
-from campaign_worker.providers.models import ImageGenerationRequest, ImageGenerationResult
+from campaign_worker.providers.models import (
+    ImageGenerationRequest,
+    ImageGenerationResult,
+    VideoRenderRequest,
+    VideoRenderResult,
+)
 from campaign_worker.repositories.workflow_repository import LeaseContext, WorkflowRepository
 from campaign_worker.services.job_processor import GraphJobProcessor
 
@@ -133,13 +138,44 @@ class _AlwaysFailsImageProvider(ImageProvider):
         )
 
 
-def _processor(image_provider=None, is_cancelled=None) -> GraphJobProcessor:
-    repository = _RecordingRepository()
+class _AlwaysFailsVideoProvider(VideoProvider):
+    async def render_video(self, request: VideoRenderRequest) -> VideoRenderResult:
+        now = datetime.now(UTC)
+        error = SanitizedWorkflowError(
+            code="VIDEO_PROVIDER_UNAVAILABLE",
+            message="unavailable",
+            component="HYPERFRAMES_MCP",
+            attempt=1,
+            retryable=True,
+            timestamp=now,
+            correlation_id=uuid4(),
+        )
+        return VideoRenderResult(
+            provider="always-fails", fallback_asset=False, started_at=now, completed_at=now, error=error
+        )
+
+
+class _FailingStepRepository(_RecordingRepository):
+    """Fails save_step's RUNNING marker for a chosen step, simulating a failure with no
+    natural provider-level injection point (e.g. the pure create_strategy node)."""
+
+    def __init__(self, failing_step: WorkflowStep) -> None:
+        super().__init__()
+        self._failing_step = failing_step
+
+    async def save_step(self, record):
+        if record.step == self._failing_step:
+            raise RuntimeError(f"simulated persistence failure for {self._failing_step}")
+        await super().save_step(record)
+
+
+def _processor(image_provider=None, video_provider=None, is_cancelled=None, repository=None) -> GraphJobProcessor:
+    repository = repository or _RecordingRepository()
     processor = GraphJobProcessor(
         repository,
         image_provider or MockImageProvider(),
         MockVoiceProvider(),
-        MockVideoProvider(),
+        video_provider or MockVideoProvider(),
         is_cancelled=is_cancelled,
     )
     return repository, processor
@@ -161,6 +197,8 @@ async def test_start_processes_full_pipeline_and_reaches_ready_for_review():
     assert final.storyboard is not None
     assert len(final.image_artifacts) == 3
     assert final.video_artifact is not None
+    assert final.error is None
+    assert final.retry.resume_step is None
 
 
 @pytest.mark.asyncio
@@ -209,6 +247,8 @@ async def test_resume_runs_only_prepare_final_package():
     assert final.status == CampaignStatus.FINAL
     assert final.review_package is not None
     assert final.strategy == approved.strategy  # untouched, not regenerated
+    assert final.error is None
+    assert final.retry.resume_step is None
     # single-node graph: astream yields far fewer chunks than the 10+ node START path
     assert len(repository.save_calls) <= 2
 
@@ -234,7 +274,7 @@ async def test_regenerate_is_rejected_cleanly_through_handle_failure():
 
 
 @pytest.mark.asyncio
-async def test_generic_node_failure_is_persisted_as_failed_with_prior_progress_intact():
+async def test_images_failure_records_images_as_the_resume_step():
     repository, processor = _processor(image_provider=_AlwaysFailsImageProvider())
     version = _version()
     message = _message(SQSOperation.START, version.campaign_id, version.job_id)
@@ -247,10 +287,47 @@ async def test_generic_node_failure_is_persisted_as_failed_with_prior_progress_i
     assert final.error is not None
     assert final.retry.attempt == 1
     assert final.retry.retryable is True
+    assert final.retry.resume_step == WorkflowStep.IMAGES
+    assert final.error.workflow_step == WorkflowStep.IMAGES
     # progress made before the failing node is preserved, thanks to progressive persistence
     assert final.strategy is not None
     assert final.campaign_copy is not None
     assert final.storyboard is not None
+
+
+@pytest.mark.asyncio
+async def test_video_failure_records_video_as_the_resume_step():
+    repository, processor = _processor(video_provider=_AlwaysFailsVideoProvider())
+    version = _version()
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.FAILED
+    assert final.retry.resume_step == WorkflowStep.VIDEO
+    assert final.error.workflow_step == WorkflowStep.VIDEO
+    # progress made before the failing node (including images) is preserved
+    assert final.strategy is not None
+    assert len(final.image_artifacts) == 3
+
+
+@pytest.mark.asyncio
+async def test_strategy_failure_records_strategy_as_the_resume_step():
+    repository, processor = _processor(repository=_FailingStepRepository(WorkflowStep.STRATEGY))
+    version = _version()
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.FAILED
+    assert final.retry.resume_step == WorkflowStep.STRATEGY
+    assert final.error.workflow_step == WorkflowStep.STRATEGY
+    # strategy never actually ran
+    assert final.strategy is None
 
 
 @pytest.mark.asyncio
@@ -268,6 +345,32 @@ async def test_cancellation_is_persisted_as_cancelled():
     final = repository.save_calls[-1]
     assert final.status == CampaignStatus.CANCELLED
     assert final.error.code == "CANCELLED_BY_USER"
+    # cancelled at the very first node, which has no WorkflowStep mapping
+    assert final.error.workflow_step is None
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_a_step_tracked_node_records_the_correct_workflow_step():
+    calls = 0
+
+    async def cancelled_starting_at_create_strategy() -> bool:
+        nonlocal calls
+        calls += 1
+        # receive_request, validate_input, analyze_campaign run normally (calls 1-3);
+        # cancellation is flagged exactly when create_strategy is about to run (call 4).
+        return calls > 3
+
+    repository, processor = _processor(is_cancelled=cancelled_starting_at_create_strategy)
+    version = _version()
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.CANCELLED
+    assert final.error.code == "CANCELLED_BY_USER"
+    assert final.error.workflow_step == WorkflowStep.STRATEGY
 
 
 class _FullFakeRepository(WorkflowRepository):

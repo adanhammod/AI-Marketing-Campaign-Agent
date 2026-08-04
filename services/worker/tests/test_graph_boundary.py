@@ -271,3 +271,59 @@ async def test_cancellation_check_composes_with_step_tracking():
 
     assert calls == []
     assert repository.save_calls == []
+
+
+@pytest.mark.asyncio
+async def test_with_failure_attribution_tags_a_generic_exception_with_the_given_step():
+    from campaign_worker.graph.boundary import NodeFailure, with_failure_attribution
+
+    async def failing(state: GraphState) -> GraphState:
+        raise ValueError("boom")
+
+    wrapped = with_failure_attribution(WorkflowStep.STRATEGY)(failing)
+
+    with pytest.raises(NodeFailure) as exc_info:
+        await wrapped({"version": _version()})
+
+    assert exc_info.value.step == WorkflowStep.STRATEGY
+    assert isinstance(exc_info.value.error, ValueError)
+    assert str(exc_info.value.error) == "boom"
+
+
+@pytest.mark.asyncio
+async def test_with_failure_attribution_preserves_node_cancelled_as_the_wrapped_error():
+    from campaign_worker.graph.boundary import (
+        NodeCancelled,
+        NodeFailure,
+        with_cancellation_check,
+        with_failure_attribution,
+    )
+
+    async def node(state: GraphState) -> GraphState:
+        return state
+
+    async def is_cancelled() -> bool:
+        return True
+
+    cancellable = with_cancellation_check(is_cancelled, "create_strategy")(node)
+    wrapped = with_failure_attribution(WorkflowStep.STRATEGY)(cancellable)
+
+    with pytest.raises(NodeFailure) as exc_info:
+        await wrapped({"version": _version()})
+
+    assert exc_info.value.step == WorkflowStep.STRATEGY
+    assert isinstance(exc_info.value.error, NodeCancelled)
+
+
+@pytest.mark.asyncio
+async def test_with_failure_attribution_does_not_interfere_with_successful_nodes():
+    from campaign_worker.graph.boundary import with_failure_attribution
+
+    async def node(state: GraphState) -> GraphState:
+        return {"version": state["version"]}
+
+    wrapped = with_failure_attribution(WorkflowStep.STRATEGY)(node)
+    version = _version()
+    result = await wrapped({"version": version})
+
+    assert result["version"] is version

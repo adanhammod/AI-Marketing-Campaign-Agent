@@ -67,3 +67,28 @@ def with_cancellation_check(is_cancelled: Callable[[], Awaitable[bool]], step: s
         return wrapped
 
     return decorator
+
+
+class NodeFailure(Exception):
+    """Wraps any exception escaping a STEP-tracked node, attaching which WorkflowStep was
+    executing. GraphJobProcessor unwraps this to pass step= through to handle_failure, so
+    retry.resume_step and error.workflow_step get populated correctly instead of always None.
+    """
+
+    def __init__(self, step: WorkflowStep, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.step = step
+        self.error = error
+
+
+def with_failure_attribution(step: WorkflowStep) -> Callable[[NodeFn], NodeFn]:
+    def decorator(fn: NodeFn) -> NodeFn:
+        async def wrapped(state: GraphState) -> GraphState:
+            try:
+                return await fn(state)
+            except BaseException as exc:
+                raise NodeFailure(step, exc) from exc
+
+        return wrapped
+
+    return decorator

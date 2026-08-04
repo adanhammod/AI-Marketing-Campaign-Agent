@@ -10,7 +10,7 @@ from campaign_worker.providers.base import ImageProvider, VideoProvider, VoicePr
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 
 from . import nodes as _nodes
-from .boundary import with_cancellation_check, with_step_tracking
+from .boundary import with_cancellation_check, with_failure_attribution, with_step_tracking
 from .state import GraphState
 
 NodeFn = Callable[[GraphState], Awaitable[GraphState]]
@@ -72,31 +72,28 @@ def build_start_graph(
     def cancellable(name: str, fn: NodeFn) -> NodeFn:
         return with_cancellation_check(is_cancelled, name)(fn)
 
+    def tracked_step(name: str, step: WorkflowStep, fn: NodeFn) -> NodeFn:
+        # with_failure_attribution wraps outermost so it also catches NodeCancelled,
+        # tagging any failure at this node -- business logic or cancellation alike --
+        # with the WorkflowStep that was executing.
+        return with_failure_attribution(step)(cancellable(name, with_step_tracking(step, repository)(fn)))
+
     return build_graph(
         nodes={
             "receive_request": cancellable("receive_request", _nodes.receive_request),
             "validate_input": cancellable("validate_input", _nodes.validate_input),
             "analyze_campaign": cancellable("analyze_campaign", _nodes.analyze_campaign),
-            "create_strategy": cancellable(
-                "create_strategy", with_step_tracking(WorkflowStep.STRATEGY, repository)(_nodes.create_strategy)
-            ),
-            "generate_copy": cancellable(
-                "generate_copy", with_step_tracking(WorkflowStep.COPY, repository)(_nodes.generate_copy)
-            ),
-            "create_storyboard": cancellable(
-                "create_storyboard",
-                with_step_tracking(WorkflowStep.STORYBOARD, repository)(_nodes.create_storyboard),
-            ),
-            "generate_images": cancellable(
-                "generate_images",
-                with_step_tracking(WorkflowStep.IMAGES, repository)(_nodes.make_generate_images_node(image_provider)),
+            "create_strategy": tracked_step("create_strategy", WorkflowStep.STRATEGY, _nodes.create_strategy),
+            "generate_copy": tracked_step("generate_copy", WorkflowStep.COPY, _nodes.generate_copy),
+            "create_storyboard": tracked_step("create_storyboard", WorkflowStep.STORYBOARD, _nodes.create_storyboard),
+            "generate_images": tracked_step(
+                "generate_images", WorkflowStep.IMAGES, _nodes.make_generate_images_node(image_provider)
             ),
             "generate_voiceover": cancellable(
                 "generate_voiceover", _nodes.make_generate_voiceover_node(voice_provider)
             ),
-            "render_video": cancellable(
-                "render_video",
-                with_step_tracking(WorkflowStep.VIDEO, repository)(_nodes.make_render_video_node(video_provider)),
+            "render_video": tracked_step(
+                "render_video", WorkflowStep.VIDEO, _nodes.make_render_video_node(video_provider)
             ),
             "validate_review_package": cancellable("validate_review_package", _nodes.validate_review_package),
             "await_human_approval": cancellable("await_human_approval", _nodes.await_human_approval),
