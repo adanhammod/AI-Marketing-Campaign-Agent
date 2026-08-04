@@ -581,3 +581,72 @@ async def test_render_video_wrapped_with_step_tracking_skips_when_already_succee
     assert provider.calls == 0
     assert result["version"].video_artifact == version.video_artifact
     assert repository.save_calls == []
+
+
+async def _state_with_full_review_package() -> GraphState:
+    state = await _state_with_images_and_voice()
+    render_node = nodes.make_render_video_node(MockVideoProvider())
+    rendered = await render_node(state)
+    return {"version": rendered["version"], "voice_artifact": state["voice_artifact"]}
+
+
+@pytest.mark.asyncio
+async def test_validate_review_package_passes_when_all_artifacts_present():
+    state = await _state_with_full_review_package()
+
+    result = await nodes.validate_review_package(state)
+
+    validation = result["review_validation"]
+    assert validation.is_valid is True
+    assert validation.missing_artifacts == []
+
+
+@pytest.mark.asyncio
+async def test_validate_review_package_reports_all_missing_artifacts_for_a_fresh_version():
+    state: GraphState = {"version": _version()}
+
+    result = await nodes.validate_review_package(state)
+
+    validation = result["review_validation"]
+    assert validation.is_valid is False
+    assert validation.missing_artifacts == [
+        "strategy",
+        "campaign_copy",
+        "storyboard",
+        "image_artifacts",
+        "voice_artifact",
+        "video_artifact",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_validate_review_package_reports_only_missing_voice_artifact():
+    state = await _state_with_full_review_package()
+    state = {"version": state["version"]}  # voice_artifact intentionally dropped
+
+    result = await nodes.validate_review_package(state)
+
+    validation = result["review_validation"]
+    assert validation.is_valid is False
+    assert validation.missing_artifacts == ["voice_artifact"]
+
+
+@pytest.mark.asyncio
+async def test_validate_review_package_reports_only_missing_video_artifact():
+    state = await _state_with_images_and_voice()  # no render_video run yet
+
+    result = await nodes.validate_review_package(state)
+
+    validation = result["review_validation"]
+    assert validation.is_valid is False
+    assert validation.missing_artifacts == ["video_artifact"]
+
+
+@pytest.mark.asyncio
+async def test_validate_review_package_preserves_existing_state_keys():
+    state = await _state_with_full_review_package()
+
+    result = await nodes.validate_review_package(state)
+
+    assert result["version"] is state["version"]
+    assert result["voice_artifact"] is state["voice_artifact"]

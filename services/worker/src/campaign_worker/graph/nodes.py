@@ -12,7 +12,7 @@ from campaign_worker.providers.models import ImageGenerationRequest, VideoRender
 from campaign_worker.providers.voice_models import VoiceGenerationRequest
 
 from .boundary import NodeFn
-from .state import GraphState
+from .state import GraphState, ReviewPackageValidationResult
 
 
 async def receive_request(state: GraphState) -> GraphState:
@@ -156,3 +156,22 @@ def make_render_video_node(provider: VideoProvider) -> NodeFn:
         return {"version": version.model_copy(update={"video_artifact": result.artifact})}
 
     return render_video
+
+
+async def validate_review_package(state: GraphState) -> GraphState:
+    version = state["version"]
+    missing: list[str] = []
+    if version.strategy is None:
+        missing.append("strategy")
+    if version.campaign_copy is None:
+        missing.append("campaign_copy")
+    if version.storyboard is None:
+        missing.append("storyboard")
+    if not version.image_artifacts:
+        missing.append("image_artifacts")
+    if state.get("voice_artifact") is None:
+        missing.append("voice_artifact")
+    if version.video_artifact is None:
+        missing.append("video_artifact")
+    validation = ReviewPackageValidationResult(is_valid=not missing, missing_artifacts=missing)
+    return {**state, "review_validation": validation}
