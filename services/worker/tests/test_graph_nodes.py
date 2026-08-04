@@ -1,3 +1,5 @@
+import ast
+import inspect
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -650,3 +652,55 @@ async def test_validate_review_package_preserves_existing_state_keys():
 
     assert result["version"] is state["version"]
     assert result["voice_artifact"] is state["voice_artifact"]
+
+
+async def _state_with_valid_review_package() -> GraphState:
+    state = await _state_with_full_review_package()
+    return await nodes.validate_review_package(state)
+
+
+@pytest.mark.asyncio
+async def test_await_human_approval_requires_prior_validate_review_package():
+    state = await _state_with_full_review_package()
+    with pytest.raises(ValueError, match="validate_review_package"):
+        await nodes.await_human_approval(state)
+
+
+@pytest.mark.asyncio
+async def test_await_human_approval_rejects_an_incomplete_review_package():
+    state: GraphState = {"version": _version()}
+    validated = await nodes.validate_review_package(state)
+    with pytest.raises(ValueError, match="incomplete"):
+        await nodes.await_human_approval(validated)
+
+
+@pytest.mark.asyncio
+async def test_await_human_approval_sets_status_ready_for_review():
+    state = await _state_with_valid_review_package()
+
+    result = await nodes.await_human_approval(state)
+
+    assert result["version"].status == CampaignStatus.READY_FOR_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_await_human_approval_preserves_all_other_version_fields():
+    state = await _state_with_valid_review_package()
+
+    result = await nodes.await_human_approval(state)
+
+    before = state["version"].model_dump(exclude={"status"})
+    after = result["version"].model_dump(exclude={"status"})
+    assert before == after
+
+
+@pytest.mark.asyncio
+async def test_await_human_approval_never_loops_sleeps_or_polls():
+    source = inspect.getsource(nodes.await_human_approval)
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        assert not isinstance(node, (ast.While, ast.For, ast.AsyncFor)), (
+            f"await_human_approval must not loop/poll/retry, found {type(node).__name__}"
+        )
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            assert node.func.attr != "sleep", "await_human_approval must not busy-wait"

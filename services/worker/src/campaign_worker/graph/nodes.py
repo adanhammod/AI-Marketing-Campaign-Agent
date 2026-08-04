@@ -6,6 +6,7 @@ from campaign_contracts.campaign import (
     StoryboardScene,
     StrategyOutput,
 )
+from campaign_contracts.enums import CampaignStatus
 
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.models import ImageGenerationRequest, VideoRenderRequest
@@ -175,3 +176,13 @@ async def validate_review_package(state: GraphState) -> GraphState:
         missing.append("video_artifact")
     validation = ReviewPackageValidationResult(is_valid=not missing, missing_artifacts=missing)
     return {**state, "review_validation": validation}
+
+
+async def await_human_approval(state: GraphState) -> GraphState:
+    validation = state.get("review_validation")
+    if validation is None:
+        raise ValueError("await_human_approval requires validate_review_package to have run first")
+    if not validation.is_valid:
+        raise ValueError(f"cannot await human approval: review package incomplete: {validation.missing_artifacts}")
+    version = state["version"]
+    return {**state, "version": version.model_copy(update={"status": CampaignStatus.READY_FOR_REVIEW})}
