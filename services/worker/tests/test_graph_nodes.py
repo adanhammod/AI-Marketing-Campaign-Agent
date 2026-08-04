@@ -694,6 +694,77 @@ async def test_await_human_approval_preserves_all_other_version_fields():
     assert before == after
 
 
+async def _final_version() -> CampaignVersion:
+    state = await _state_with_images_and_voice()
+    render_node = nodes.make_render_video_node(MockVideoProvider())
+    rendered = await render_node(state)
+    return rendered["version"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_final_package_requires_strategy_copy_and_storyboard():
+    state: GraphState = {"version": _version()}
+    with pytest.raises(ValueError, match="strategy"):
+        await nodes.prepare_final_package(state)
+
+
+@pytest.mark.asyncio
+async def test_prepare_final_package_requires_prior_generate_images():
+    version = await _version_with_storyboard()
+    with pytest.raises(ValueError, match="generate_images"):
+        await nodes.prepare_final_package({"version": version})
+
+
+@pytest.mark.asyncio
+async def test_prepare_final_package_requires_prior_render_video():
+    version = await _version_with_storyboard()
+    images_result = await nodes.make_generate_images_node(MockImageProvider())({"version": version})
+    with pytest.raises(ValueError, match="render_video"):
+        await nodes.prepare_final_package({"version": images_result["version"]})
+
+
+@pytest.mark.asyncio
+async def test_prepare_final_package_sets_status_final():
+    version = await _final_version()
+
+    result = await nodes.prepare_final_package({"version": version})
+
+    assert result["version"].status == CampaignStatus.FINAL
+
+
+@pytest.mark.asyncio
+async def test_prepare_final_package_builds_review_package_with_all_artifact_ids():
+    version = await _final_version()
+
+    result = await nodes.prepare_final_package({"version": version})
+
+    review_package = result["version"].review_package
+    assert review_package is not None
+    expected_ids = {artifact.artifact_id for artifact in version.image_artifacts}
+    expected_ids.add(version.video_artifact.artifact_id)
+    assert set(review_package.artifact_ids) == expected_ids
+
+
+@pytest.mark.asyncio
+async def test_prepare_final_package_manifest_checksum_is_deterministic():
+    version = await _final_version()
+
+    first = await nodes.prepare_final_package({"version": version})
+    second = await nodes.prepare_final_package({"version": version})
+
+    assert first["version"].review_package.manifest_checksum == second["version"].review_package.manifest_checksum
+
+
+@pytest.mark.asyncio
+async def test_prepare_final_package_does_not_regenerate_any_artifacts():
+    version = await _final_version()
+
+    result = await nodes.prepare_final_package({"version": version})
+
+    assert result["version"].image_artifacts == version.image_artifacts
+    assert result["version"].video_artifact == version.video_artifact
+
+
 @pytest.mark.asyncio
 async def test_await_human_approval_never_loops_sleeps_or_polls():
     source = inspect.getsource(nodes.await_human_approval)

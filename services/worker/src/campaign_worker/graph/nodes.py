@@ -1,7 +1,11 @@
+import hashlib
+from uuid import uuid4
+
 from campaign_contracts.campaign import (
     CampaignCopy,
     ChannelCopy,
     ImagePrompt,
+    ReviewPackage,
     Storyboard,
     StoryboardScene,
     StrategyOutput,
@@ -186,3 +190,24 @@ async def await_human_approval(state: GraphState) -> GraphState:
         raise ValueError(f"cannot await human approval: review package incomplete: {validation.missing_artifacts}")
     version = state["version"]
     return {**state, "version": version.model_copy(update={"status": CampaignStatus.READY_FOR_REVIEW})}
+
+
+async def prepare_final_package(state: GraphState) -> GraphState:
+    version = state["version"]
+    if version.strategy is None or version.campaign_copy is None or version.storyboard is None:
+        raise ValueError("prepare_final_package requires strategy, campaign_copy, and storyboard to be present")
+    if not version.image_artifacts:
+        raise ValueError("prepare_final_package requires generate_images to have run first")
+    if version.video_artifact is None:
+        raise ValueError("prepare_final_package requires render_video to have run first")
+
+    artifact_ids = [artifact.artifact_id for artifact in version.image_artifacts]
+    artifact_ids.append(version.video_artifact.artifact_id)
+    signature = f"{version.campaign_id}:{version.campaign_version}:" + ":".join(
+        sorted(str(artifact_id) for artifact_id in artifact_ids)
+    )
+    manifest_checksum = hashlib.sha256(signature.encode()).hexdigest()
+    review_package = ReviewPackage(artifact_id=uuid4(), manifest_checksum=manifest_checksum, artifact_ids=artifact_ids)
+
+    updated_version = version.model_copy(update={"review_package": review_package, "status": CampaignStatus.FINAL})
+    return {**state, "version": updated_version}
