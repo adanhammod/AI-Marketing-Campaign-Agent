@@ -17,6 +17,8 @@ class Settings:
     shutdown_grace_seconds: float = 30
     endpoint_url: str | None = None
     environment: str = "local"
+    service_name: str = "campaign-worker"
+    health_port: int = 8080
 
     def validate(self) -> None:
         if not self.aws_region or not self.queue_url or not self.table_name:
@@ -31,6 +33,8 @@ class Settings:
             raise ConfigurationError("retry and shutdown bounds must be positive")
         if self.endpoint_url and self.environment not in {"local", "test"}:
             raise ConfigurationError("endpoint URL is allowed only for local testing")
+        if not 1 <= self.health_port <= 65535:
+            raise ConfigurationError("health port must be between 1 and 65535")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -46,6 +50,8 @@ class Settings:
             shutdown_grace_seconds=float(os.getenv("WORKER_SHUTDOWN_GRACE_SECONDS", "30")),
             endpoint_url=os.getenv("AWS_ENDPOINT_URL"),
             environment=os.getenv("ENVIRONMENT", "local"),
+            service_name=os.getenv("WORKER_SERVICE_NAME", "campaign-worker"),
+            health_port=int(os.getenv("WORKER_HEALTH_PORT", "8080")),
         )
         value.validate()
         return value

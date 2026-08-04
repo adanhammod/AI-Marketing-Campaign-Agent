@@ -3,10 +3,12 @@ import signal
 from typing import Any
 
 import boto3  # type: ignore[import-untyped]
+import uvicorn
 from botocore.config import Config  # type: ignore[import-untyped]
 
 from .config import Settings
 from .consumer.sqs_consumer import SQSConsumer
+from .health import build_health_app
 from .logging import configure_logging
 from .providers.mock_image_provider import MockImageProvider
 from .providers.mock_video_provider import MockVideoProvider
@@ -35,10 +37,17 @@ async def serve() -> None:
     settings = Settings.from_env()
     configure_logging()
     consumer = build_consumer(settings)
+    health_app = build_health_app(consumer, settings)
+    server = uvicorn.Server(uvicorn.Config(health_app, host="0.0.0.0", port=settings.health_port, log_level="warning"))
+
+    async def shutdown() -> None:
+        server.should_exit = True
+        await consumer.shutdown()
+
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signum, lambda: asyncio.create_task(consumer.shutdown()))
-    await consumer.run()
+        loop.add_signal_handler(signum, lambda: asyncio.create_task(shutdown()))
+    await asyncio.gather(consumer.run(), server.serve())
 
 
 def main() -> None:

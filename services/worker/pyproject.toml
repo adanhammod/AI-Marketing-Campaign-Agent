@@ -7,10 +7,10 @@ name = "campaign-worker"
 version = "0.1.0"
 description = "SQS consumption and duplicate-delivery boundary"
 requires-python = ">=3.12,<3.13"
-dependencies = ["campaign-contracts==0.1.0", "boto3>=1.40,<2", "pydantic>=2.12,<3", "langgraph>=0.2,<1"]
+dependencies = ["campaign-contracts==0.1.0", "boto3>=1.40,<2", "pydantic>=2.12,<3", "langgraph>=0.2,<1", "fastapi>=0.116,<1", "uvicorn>=0.35,<1", "prometheus-client>=0.21,<1"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=5", "ruff>=0.12", "mypy>=1.17", "moto[dynamodb,sqs]>=5.1"]
+dev = ["httpx>=0.28", "pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=5", "ruff>=0.12", "mypy>=1.17", "moto[dynamodb,sqs]>=5.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/campaign_worker"]
@@ -18,6 +18,7 @@ packages = ["src/campaign_worker"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
 
 [tool.ruff]
 target-version = "py312"
