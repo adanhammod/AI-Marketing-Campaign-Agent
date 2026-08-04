@@ -134,6 +134,9 @@ class FakeRepository(WorkflowRepository):
     async def save_step(self, record):
         pass
 
+    async def save_version(self, version, lease):
+        self.version = version
+
 
 class StubSQS:
     def __init__(self, messages=None):

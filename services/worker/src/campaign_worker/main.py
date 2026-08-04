@@ -8,8 +8,11 @@ from botocore.config import Config  # type: ignore[import-untyped]
 from .config import Settings
 from .consumer.sqs_consumer import SQSConsumer
 from .logging import configure_logging
+from .providers.mock_image_provider import MockImageProvider
+from .providers.mock_video_provider import MockVideoProvider
+from .providers.mock_voice_provider import MockVoiceProvider
 from .repositories.dynamodb_workflow_repository import DynamoDBWorkflowRepository
-from .services.job_processor import NoOpJobProcessor
+from .services.job_processor import GraphJobProcessor
 
 
 def build_consumer(
@@ -24,7 +27,8 @@ def build_consumer(
         "dynamodb", region_name=settings.aws_region, endpoint_url=settings.endpoint_url, config=config
     )
     repository = DynamoDBWorkflowRepository(dynamodb, settings.table_name or "")
-    return SQSConsumer(sqs, repository, NoOpJobProcessor(), settings)
+    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
+    return SQSConsumer(sqs, repository, processor, settings)
 
 
 async def serve() -> None:

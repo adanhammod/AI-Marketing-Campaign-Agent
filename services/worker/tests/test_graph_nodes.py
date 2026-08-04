@@ -186,6 +186,9 @@ class _FakeStepRepositoryForGenerateImages(WorkflowRepository):
     async def available(self):
         raise NotImplementedError
 
+    async def save_version(self, version, lease):
+        raise NotImplementedError
+
 
 class _AlwaysFailsImageProvider(ImageProvider):
     async def generate_image(self, request: ImageGenerationRequest) -> ImageGenerationResult:

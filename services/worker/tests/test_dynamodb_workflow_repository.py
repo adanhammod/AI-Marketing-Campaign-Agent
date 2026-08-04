@@ -173,3 +173,60 @@ async def test_get_step_returns_none_when_absent(database):
     client, message = database
     repository = DynamoDBWorkflowRepository(client, TABLE)
     assert await repository.get_step(message.campaign_id, 1, WorkflowStep.COPY) is None
+
+
+@pytest.mark.asyncio
+async def test_save_version_persists_content(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    updated = loaded.model_copy(update={"status": CampaignStatus.READY_FOR_REVIEW})
+
+    await repository.save_version(updated, lease)
+
+    reloaded = await repository.load_version(message)
+    assert reloaded.status == CampaignStatus.READY_FOR_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_save_version_does_not_clobber_lease_or_lock_version(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+
+    await repository.save_version(loaded, lease)
+
+    # If save_version had clobbered lease_owner/lock_version, this heartbeat (which
+    # conditions on both) would raise LeaseLost.
+    refreshed = await repository.heartbeat(message, lease, now + timedelta(seconds=1), now + timedelta(minutes=2))
+    assert refreshed.owner == "worker-a"
+
+
+@pytest.mark.asyncio
+async def test_save_version_raises_lease_lost_for_wrong_owner(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    wrong_owner_lease = lease.__class__("worker-b", lease.lock_version, lease.expires_at)
+
+    with pytest.raises(LeaseLost):
+        await repository.save_version(loaded, wrong_owner_lease)
+
+
+@pytest.mark.asyncio
+async def test_save_version_raises_lease_lost_for_stale_lock_version(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    stale_lease = lease.__class__(lease.owner, lease.lock_version - 1, lease.expires_at)
+
+    with pytest.raises(LeaseLost):
+        await repository.save_version(loaded, stale_lease)

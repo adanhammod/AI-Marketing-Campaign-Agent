@@ -7,8 +7,17 @@ from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, Re
 from campaign_contracts.enums import CampaignStatus, StepStatus, WorkflowStep
 from campaign_contracts.steps import WorkflowStepRecord
 
-from campaign_worker.graph.executor import GraphExecutor, build_default_graph, build_graph
+from campaign_worker.graph.executor import (
+    GraphExecutor,
+    build_default_graph,
+    build_graph,
+    build_resume_graph,
+    build_start_graph,
+)
 from campaign_worker.graph.state import GraphState
+from campaign_worker.providers.mock_image_provider import MockImageProvider
+from campaign_worker.providers.mock_video_provider import MockVideoProvider
+from campaign_worker.providers.mock_voice_provider import MockVoiceProvider
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 
 
@@ -47,6 +56,9 @@ class _InMemoryStepRepository(WorkflowRepository):
         raise NotImplementedError
 
     async def available(self):
+        raise NotImplementedError
+
+    async def save_version(self, version, lease):
         raise NotImplementedError
 
 
@@ -244,3 +256,88 @@ async def test_default_graph_raises_node_cancelled_when_cancellation_flagged():
     executor = GraphExecutor(graph)
     with pytest.raises(NodeCancelled, match="receive_request"):
         await executor.run(_version())
+
+
+@pytest.mark.asyncio
+async def test_start_graph_runs_end_to_end_and_reaches_ready_for_review():
+    graph = build_start_graph(
+        _InMemoryStepRepository(), _never_cancelled, MockImageProvider(), MockVoiceProvider(), MockVideoProvider()
+    )
+    executor = GraphExecutor(graph)
+    result = await executor.run(_version())
+
+    assert result.status == CampaignStatus.READY_FOR_REVIEW
+    assert result.strategy is not None
+    assert result.campaign_copy is not None
+    assert result.storyboard is not None
+    assert len(result.image_artifacts) == 3
+    assert result.video_artifact is not None
+
+
+@pytest.mark.asyncio
+async def test_start_graph_uses_no_checkpointer():
+    graph = build_start_graph(
+        _InMemoryStepRepository(), _never_cancelled, MockImageProvider(), MockVoiceProvider(), MockVideoProvider()
+    )
+    assert graph.checkpointer is None
+
+
+@pytest.mark.asyncio
+async def test_start_graph_persists_every_tracked_step():
+    repository = _InMemoryStepRepository()
+    version = _version()
+    graph = build_start_graph(
+        repository, _never_cancelled, MockImageProvider(), MockVoiceProvider(), MockVideoProvider()
+    )
+    await GraphExecutor(graph).run(version)
+
+    for step in (
+        WorkflowStep.STRATEGY,
+        WorkflowStep.COPY,
+        WorkflowStep.STORYBOARD,
+        WorkflowStep.IMAGES,
+        WorkflowStep.VIDEO,
+    ):
+        record = repository.steps[(version.campaign_id, version.campaign_version, step)]
+        assert record.status == StepStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_start_graph_raises_node_cancelled_when_cancellation_flagged():
+    from campaign_worker.graph.boundary import NodeCancelled
+
+    async def always_cancelled() -> bool:
+        return True
+
+    graph = build_start_graph(
+        _InMemoryStepRepository(), always_cancelled, MockImageProvider(), MockVoiceProvider(), MockVideoProvider()
+    )
+    with pytest.raises(NodeCancelled, match="receive_request"):
+        await GraphExecutor(graph).run(_version())
+
+
+@pytest.mark.asyncio
+async def test_resume_graph_runs_prepare_final_package_only():
+    version = (
+        await GraphExecutor(
+            build_start_graph(
+                _InMemoryStepRepository(),
+                _never_cancelled,
+                MockImageProvider(),
+                MockVoiceProvider(),
+                MockVideoProvider(),
+            )
+        ).run(_version())
+    ).model_copy(update={"status": CampaignStatus.APPROVED})
+
+    graph = build_resume_graph(_never_cancelled)
+    result = await GraphExecutor(graph).run(version)
+
+    assert result.status == CampaignStatus.FINAL
+    assert result.review_package is not None
+
+
+@pytest.mark.asyncio
+async def test_resume_graph_uses_no_checkpointer():
+    graph = build_resume_graph(_never_cancelled)
+    assert graph.checkpointer is None

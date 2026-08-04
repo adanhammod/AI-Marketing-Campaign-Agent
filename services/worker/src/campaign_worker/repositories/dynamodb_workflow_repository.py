@@ -8,7 +8,7 @@ from uuid import UUID
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer  # type: ignore[import-untyped]
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 from campaign_contracts.campaign import CampaignVersion
-from campaign_contracts.dynamodb import meta_sk, pk, serialize_step, step_sk, version_sk
+from campaign_contracts.dynamodb import meta_sk, pk, serialize_step, serialize_version, step_sk, version_sk
 from campaign_contracts.enums import WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage, duplicate_delivery_key
 from campaign_contracts.steps import WorkflowStepRecord
@@ -272,6 +272,37 @@ class DynamoDBWorkflowRepository(WorkflowRepository):
             )
         except ClientError as exc:
             raise PersistenceUnavailable("step persistence unavailable") from exc
+
+    async def save_version(self, version: CampaignVersion, lease: LeaseContext) -> None:
+        # lock_version and checkpoint_version are owned by the lease/completion bookkeeping
+        # (acquire_lease/heartbeat/complete mutate them independently, concurrently, on this
+        # same item) -- content saves must never overwrite them, only the version's own fields.
+        body = {
+            key: value
+            for key, value in serialize_version(version).items()
+            if key not in ("PK", "SK", "lock_version", "checkpoint_version")
+        }
+        marshaled = _marshal(body)
+        keys = list(marshaled)
+        names = {f"#a{i}": key for i, key in enumerate(keys)}
+        values = {f":a{i}": marshaled[key] for i, key in enumerate(keys)}
+        values[":owner"] = _SERIALIZER.serialize(lease.owner)
+        values[":lock"] = _SERIALIZER.serialize(lease.lock_version)
+        set_expression = "SET " + ", ".join(f"{name}=:a{i}" for i, name in enumerate(names))
+        try:
+            await asyncio.to_thread(
+                self._client.update_item,
+                TableName=self._table_name,
+                Key=_marshal({"PK": pk(version.campaign_id), "SK": version_sk(version.campaign_version)}),
+                UpdateExpression=set_expression,
+                ConditionExpression="lease_owner=:owner AND lock_version=:lock",
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+            )
+        except ClientError as exc:
+            if self._conditional(exc):
+                raise LeaseLost("campaign version save conflict") from None
+            raise PersistenceUnavailable("version persistence unavailable") from None
 
     async def _get(self, partition: str, sort: str) -> dict[str, Any] | None:
         try:

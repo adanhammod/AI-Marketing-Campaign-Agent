@@ -6,6 +6,7 @@ from campaign_contracts.enums import WorkflowStep
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 
 from . import nodes as _nodes
@@ -58,6 +59,71 @@ def build_default_graph(repository: WorkflowRepository, is_cancelled: Callable[[
             ("generate_copy",),
             ("create_storyboard",),
         ],
+    )
+
+
+def build_start_graph(
+    repository: WorkflowRepository,
+    is_cancelled: Callable[[], Awaitable[bool]],
+    image_provider: ImageProvider,
+    voice_provider: VoiceProvider,
+    video_provider: VideoProvider,
+) -> _CompiledGraph:
+    def cancellable(name: str, fn: NodeFn) -> NodeFn:
+        return with_cancellation_check(is_cancelled, name)(fn)
+
+    return build_graph(
+        nodes={
+            "receive_request": cancellable("receive_request", _nodes.receive_request),
+            "validate_input": cancellable("validate_input", _nodes.validate_input),
+            "analyze_campaign": cancellable("analyze_campaign", _nodes.analyze_campaign),
+            "create_strategy": cancellable(
+                "create_strategy", with_step_tracking(WorkflowStep.STRATEGY, repository)(_nodes.create_strategy)
+            ),
+            "generate_copy": cancellable(
+                "generate_copy", with_step_tracking(WorkflowStep.COPY, repository)(_nodes.generate_copy)
+            ),
+            "create_storyboard": cancellable(
+                "create_storyboard",
+                with_step_tracking(WorkflowStep.STORYBOARD, repository)(_nodes.create_storyboard),
+            ),
+            "generate_images": cancellable(
+                "generate_images",
+                with_step_tracking(WorkflowStep.IMAGES, repository)(_nodes.make_generate_images_node(image_provider)),
+            ),
+            "generate_voiceover": cancellable(
+                "generate_voiceover", _nodes.make_generate_voiceover_node(voice_provider)
+            ),
+            "render_video": cancellable(
+                "render_video",
+                with_step_tracking(WorkflowStep.VIDEO, repository)(_nodes.make_render_video_node(video_provider)),
+            ),
+            "validate_review_package": cancellable("validate_review_package", _nodes.validate_review_package),
+            "await_human_approval": cancellable("await_human_approval", _nodes.await_human_approval),
+        },
+        edges=[
+            ("receive_request",),
+            ("validate_input",),
+            ("analyze_campaign",),
+            ("create_strategy",),
+            ("generate_copy",),
+            ("create_storyboard",),
+            ("generate_images",),
+            ("generate_voiceover",),
+            ("render_video",),
+            ("validate_review_package",),
+            ("await_human_approval",),
+        ],
+    )
+
+
+def build_resume_graph(is_cancelled: Callable[[], Awaitable[bool]]) -> _CompiledGraph:
+    def cancellable(name: str, fn: NodeFn) -> NodeFn:
+        return with_cancellation_check(is_cancelled, name)(fn)
+
+    return build_graph(
+        nodes={"prepare_final_package": cancellable("prepare_final_package", _nodes.prepare_final_package)},
+        edges=[("prepare_final_package",)],
     )
 
 

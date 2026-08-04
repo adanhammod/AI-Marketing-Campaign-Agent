@@ -51,6 +51,9 @@ class FakeStepRepository(WorkflowRepository):
     async def available(self):
         raise NotImplementedError
 
+    async def save_version(self, version, lease):
+        raise NotImplementedError
+
 
 def _brief():
     return CampaignCreationRequest(

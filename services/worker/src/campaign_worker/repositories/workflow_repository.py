@@ -55,3 +55,6 @@ class WorkflowRepository(ABC):
 
     @abstractmethod
     async def save_step(self, record: WorkflowStepRecord) -> None: ...
+
+    @abstractmethod
+    async def save_version(self, version: CampaignVersion, lease: LeaseContext) -> None: ...
