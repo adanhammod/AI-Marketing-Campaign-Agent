@@ -1,0 +1,1465 @@
+{
+  "components": {
+    "schemas": {
+      "ApprovalRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "default": "DEMO_USER",
+            "pattern": "^DEMO_USER$",
+            "title": "Actor",
+            "type": "string"
+          },
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "approved_at": {
+            "format": "date-time",
+            "title": "Approved At",
+            "type": "string"
+          },
+          "campaign_id": {
+            "format": "uuid",
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "campaign_version": {
+            "minimum": 1.0,
+            "title": "Campaign Version",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "default": "APPROVED",
+            "pattern": "^APPROVED$",
+            "title": "Decision",
+            "type": "string"
+          },
+          "lock_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Lock Version",
+            "type": "integer"
+          },
+          "manifest_checksum": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Manifest Checksum",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "approval_id",
+          "campaign_id",
+          "campaign_version",
+          "approved_at",
+          "manifest_checksum",
+          "created_at"
+        ],
+        "title": "ApprovalRecord",
+        "type": "object"
+      },
+      "ArtifactType": {
+        "enum": [
+          "REFERENCE_IMAGE",
+          "IMAGE",
+          "AUDIO",
+          "VIDEO",
+          "STORYBOARD",
+          "MANIFEST",
+          "REVIEW_PACKAGE",
+          "FINAL_PACKAGE",
+          "PROVIDER_DIAGNOSTIC"
+        ],
+        "title": "ArtifactType",
+        "type": "string"
+      },
+      "CampaignCopy": {
+        "additionalProperties": false,
+        "properties": {
+          "call_to_action": {
+            "title": "Call To Action",
+            "type": "string"
+          },
+          "caption": {
+            "title": "Caption",
+            "type": "string"
+          },
+          "channel_variants": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelCopy"
+            },
+            "title": "Channel Variants",
+            "type": "array"
+          },
+          "hashtags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hashtags",
+            "type": "array"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          }
+        },
+        "required": [
+          "headline",
+          "caption",
+          "call_to_action",
+          "hashtags",
+          "channel_variants"
+        ],
+        "title": "CampaignCopy",
+        "type": "object"
+      },
+      "CampaignCreationAcceptedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "campaign_id": {
+            "format": "uuid",
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "campaign_version": {
+            "minimum": 1.0,
+            "title": "Campaign Version",
+            "type": "integer"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "links": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Links",
+            "type": "object"
+          },
+          "progress_percent": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress Percent",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CampaignStatus"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "campaign_version",
+          "job_id",
+          "status",
+          "progress_percent",
+          "links"
+        ],
+        "title": "CampaignCreationAcceptedResponse",
+        "type": "object"
+      },
+      "CampaignCreationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "brand_colors": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Brand Colors",
+            "type": "array"
+          },
+          "business_description": {
+            "maxLength": 2000,
+            "minLength": 20,
+            "title": "Business Description",
+            "type": "string"
+          },
+          "business_name": {
+            "maxLength": 120,
+            "minLength": 2,
+            "title": "Business Name",
+            "type": "string"
+          },
+          "call_to_action": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Call To Action"
+          },
+          "campaign_goal": {
+            "maxLength": 300,
+            "minLength": 3,
+            "title": "Campaign Goal",
+            "type": "string"
+          },
+          "key_message": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Message"
+          },
+          "language": {
+            "maxLength": 20,
+            "minLength": 2,
+            "title": "Language",
+            "type": "string"
+          },
+          "platforms": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Platforms",
+            "type": "array"
+          },
+          "product_or_service": {
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Product Or Service",
+            "type": "string"
+          },
+          "reference_artifact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Artifact Id"
+          },
+          "target_audience": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Audience"
+          },
+          "tone": {
+            "maxLength": 80,
+            "minLength": 2,
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_name",
+          "product_or_service",
+          "business_description",
+          "campaign_goal",
+          "platforms",
+          "tone",
+          "language"
+        ],
+        "title": "CampaignCreationRequest",
+        "type": "object"
+      },
+      "CampaignDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Actions",
+            "type": "object"
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/PublicArtifactReference"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "brief": {
+            "$ref": "#/components/schemas/NormalizedCampaignBrief"
+          },
+          "campaign_id": {
+            "format": "uuid",
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "campaign_version": {
+            "title": "Campaign Version",
+            "type": "integer"
+          },
+          "completed_steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStep"
+            },
+            "title": "Completed Steps",
+            "type": "array"
+          },
+          "copy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CampaignCopy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowStep"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_version": {
+            "minimum": 1.0,
+            "title": "Current Version",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SanitizedWorkflowError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "event_sequence": {
+            "minimum": 0.0,
+            "title": "Event Sequence",
+            "type": "integer"
+          },
+          "latest_final_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Final Version"
+          },
+          "progress_percent": {
+            "title": "Progress Percent",
+            "type": "integer"
+          },
+          "retry_eligible": {
+            "title": "Retry Eligible",
+            "type": "boolean"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevisionFeedback"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/CampaignStatus"
+          },
+          "storyboard": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Storyboard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategyOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "campaign_version",
+          "status",
+          "progress_percent",
+          "brief",
+          "retry_eligible",
+          "created_at",
+          "updated_at",
+          "title",
+          "current_version",
+          "event_sequence"
+        ],
+        "title": "CampaignDetailResponse",
+        "type": "object"
+      },
+      "CampaignListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CampaignListResponse",
+        "type": "object"
+      },
+      "CampaignStatus": {
+        "enum": [
+          "CREATED",
+          "QUEUED",
+          "GENERATING_STRATEGY",
+          "GENERATING_COPY",
+          "GENERATING_STORYBOARD",
+          "GENERATING_IMAGES",
+          "RENDERING_VIDEO",
+          "READY_FOR_REVIEW",
+          "REVISION_REQUESTED",
+          "APPROVED",
+          "FINAL",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "title": "CampaignStatus",
+        "type": "string"
+      },
+      "CampaignSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "campaign_id": {
+            "format": "uuid",
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowStep"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_version": {
+            "minimum": 1.0,
+            "title": "Current Version",
+            "type": "integer"
+          },
+          "latest_final_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Final Version"
+          },
+          "progress_percent": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress Percent",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CampaignStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "title",
+          "current_version",
+          "status",
+          "progress_percent",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "CampaignSummary",
+        "type": "object"
+      },
+      "ChannelCopy": {
+        "additionalProperties": false,
+        "properties": {
+          "call_to_action": {
+            "title": "Call To Action",
+            "type": "string"
+          },
+          "caption": {
+            "title": "Caption",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "hashtags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hashtags",
+            "type": "array"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel",
+          "headline",
+          "caption",
+          "call_to_action",
+          "hashtags"
+        ],
+        "title": "ChannelCopy",
+        "type": "object"
+      },
+      "ConflictError": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/SanitizedWorkflowError"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ConflictError",
+        "type": "object"
+      },
+      "ErrorComponent": {
+        "enum": [
+          "FASTAPI",
+          "LANGGRAPH_WORKER",
+          "MARKETING_MCP",
+          "IMAGE_MCP",
+          "HYPERFRAMES_MCP",
+          "BEDROCK",
+          "DYNAMODB",
+          "S3",
+          "SQS",
+          "PACKAGER",
+          "UNKNOWN"
+        ],
+        "title": "ErrorComponent",
+        "type": "string"
+      },
+      "HealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "service",
+          "environment"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "NormalizedCampaignBrief": {
+        "additionalProperties": false,
+        "properties": {
+          "brand_colors": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Brand Colors",
+            "type": "array"
+          },
+          "business_description": {
+            "maxLength": 2000,
+            "minLength": 20,
+            "title": "Business Description",
+            "type": "string"
+          },
+          "business_name": {
+            "maxLength": 120,
+            "minLength": 2,
+            "title": "Business Name",
+            "type": "string"
+          },
+          "call_to_action": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Call To Action"
+          },
+          "campaign_goal": {
+            "maxLength": 300,
+            "minLength": 3,
+            "title": "Campaign Goal",
+            "type": "string"
+          },
+          "key_message": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Message"
+          },
+          "language": {
+            "maxLength": 20,
+            "minLength": 2,
+            "title": "Language",
+            "type": "string"
+          },
+          "platforms": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Platforms",
+            "type": "array"
+          },
+          "product_or_service": {
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Product Or Service",
+            "type": "string"
+          },
+          "reference_artifact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Artifact Id"
+          },
+          "target_audience": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Audience"
+          },
+          "tone": {
+            "maxLength": 80,
+            "minLength": 2,
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_name",
+          "product_or_service",
+          "business_description",
+          "campaign_goal",
+          "platforms",
+          "tone",
+          "language"
+        ],
+        "title": "NormalizedCampaignBrief",
+        "type": "object"
+      },
+      "NotFoundError": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/SanitizedWorkflowError"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "NotFoundError",
+        "type": "object"
+      },
+      "ProviderStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Category",
+            "type": "string"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status"
+          },
+          "provider": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_code": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Code"
+          }
+        },
+        "required": [
+          "provider",
+          "category"
+        ],
+        "title": "ProviderStatus",
+        "type": "object"
+      },
+      "PublicArtifactReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "artifact_type": {
+            "$ref": "#/components/schemas/ArtifactType"
+          },
+          "campaign_id": {
+            "format": "uuid",
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "campaign_version": {
+            "minimum": 1.0,
+            "title": "Campaign Version",
+            "type": "integer"
+          },
+          "checksum_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Checksum Sha256",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "size_bytes": {
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "workflow_step": {
+            "$ref": "#/components/schemas/WorkflowStep"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "artifact_type",
+          "campaign_id",
+          "campaign_version",
+          "workflow_step",
+          "mime_type",
+          "size_bytes",
+          "checksum_sha256",
+          "created_at"
+        ],
+        "title": "PublicArtifactReference",
+        "type": "object"
+      },
+      "RevisionFeedback": {
+        "additionalProperties": false,
+        "properties": {
+          "affected_artifact_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Affected Artifact Ids",
+            "type": "array"
+          },
+          "earliest_affected_step": {
+            "$ref": "#/components/schemas/WorkflowStep"
+          },
+          "parent_version": {
+            "minimum": 1.0,
+            "title": "Parent Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RevisionTarget"
+          }
+        },
+        "required": [
+          "parent_version",
+          "reason",
+          "scope",
+          "earliest_affected_step"
+        ],
+        "title": "RevisionFeedback",
+        "type": "object"
+      },
+      "RevisionTarget": {
+        "enum": [
+          "STRATEGY",
+          "COPY",
+          "STORYBOARD",
+          "SELECTED_IMAGES",
+          "VIDEO"
+        ],
+        "title": "RevisionTarget",
+        "type": "string"
+      },
+      "SanitizedWorkflowError": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "minimum": 1.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "campaign_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Id"
+          },
+          "campaign_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Version"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "component": {
+            "$ref": "#/components/schemas/ErrorComponent"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "message": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "provider_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "default": 1,
+            "maximum": 1.0,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "workflow_step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowStep"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "component",
+          "attempt",
+          "retryable",
+          "timestamp",
+          "correlation_id"
+        ],
+        "title": "SanitizedWorkflowError",
+        "type": "object"
+      },
+      "StandardValidationError": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/SanitizedWorkflowError"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "StandardValidationError",
+        "type": "object"
+      },
+      "Storyboard": {
+        "additionalProperties": false,
+        "properties": {
+          "scenes": {
+            "items": {
+              "$ref": "#/components/schemas/StoryboardScene"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Scenes",
+            "type": "array"
+          },
+          "total_duration_seconds": {
+            "maximum": 17.0,
+            "minimum": 13.0,
+            "title": "Total Duration Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scenes",
+          "total_duration_seconds"
+        ],
+        "title": "Storyboard",
+        "type": "object"
+      },
+      "StoryboardScene": {
+        "additionalProperties": false,
+        "properties": {
+          "duration_seconds": {
+            "minimum": 1.0,
+            "title": "Duration Seconds",
+            "type": "integer"
+          },
+          "narration": {
+            "title": "Narration",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "scene_number": {
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Scene Number",
+            "type": "integer"
+          },
+          "text_overlay": {
+            "default": "",
+            "title": "Text Overlay",
+            "type": "string"
+          },
+          "transition": {
+            "title": "Transition",
+            "type": "string"
+          },
+          "visual_prompt": {
+            "title": "Visual Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene_number",
+          "purpose",
+          "duration_seconds",
+          "narration",
+          "visual_prompt",
+          "transition"
+        ],
+        "title": "StoryboardScene",
+        "type": "object"
+      },
+      "StrategyOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "audience": {
+            "title": "Audience",
+            "type": "string"
+          },
+          "channel_rationale": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Channel Rationale",
+            "type": "object"
+          },
+          "key_message": {
+            "title": "Key Message",
+            "type": "string"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "string"
+          },
+          "positioning": {
+            "title": "Positioning",
+            "type": "string"
+          }
+        },
+        "required": [
+          "audience",
+          "positioning",
+          "objective",
+          "key_message",
+          "channel_rationale"
+        ],
+        "title": "StrategyOutput",
+        "type": "object"
+      },
+      "WorkflowStep": {
+        "enum": [
+          "strategy",
+          "copy",
+          "storyboard",
+          "images",
+          "video",
+          "package"
+        ],
+        "title": "WorkflowStep",
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "title": "Campaign Control Plane",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/campaigns": {
+      "get": {
+        "operationId": "list_campaigns_api_v1_campaigns_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardValidationError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "List Campaigns",
+        "tags": [
+          "campaigns"
+        ]
+      },
+      "post": {
+        "operationId": "create_campaign_api_v1_campaigns_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignCreationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignCreationAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardValidationError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardValidationError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Create Campaign",
+        "tags": [
+          "campaigns"
+        ]
+      }
+    },
+    "/api/v1/campaigns/{campaign_id}": {
+      "get": {
+        "operationId": "get_campaign_api_v1_campaigns__campaign_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardValidationError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Get Campaign",
+        "tags": [
+          "campaigns"
+        ]
+      }
+    },
+    "/health/live": {
+      "get": {
+        "operationId": "live_health_live_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Live",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "ready_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Ready",
+        "tags": [
+          "health"
+        ]
+      }
+    }
+  }
+}
