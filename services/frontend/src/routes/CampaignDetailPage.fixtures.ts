@@ -1,4 +1,8 @@
-export type AssetStatus = 'pending' | 'generating' | 'ready'
+import type { components } from '../api/schema.gen'
+
+export type CampaignStatus = components['schemas']['CampaignStatus']
+
+export type AssetStatus = 'pending' | 'generating' | 'ready' | 'failed'
 
 // Metadata surfaced by the glass reveal panel once an asset reaches 'ready'.
 // Only defined for asset kinds this pass covers (images/voiceover/copy/strategy).
@@ -19,6 +23,10 @@ export interface AssetFixture {
 // Demo campaign title — stands in for the real CampaignDetailResponse.title field
 // (already modeled by the API) until this page wires up live data (see PRODUCT.md).
 export const DEMO_CAMPAIGN_TITLE = 'Summer Product Launch'
+
+// Demo pipeline position — matches DEMO_ASSETS below (storyboard is the one
+// actively generating). Drives the PipelineStepper; not live-polled (see PRODUCT.md).
+export const DEMO_STATUS: CampaignStatus = 'GENERATING_STORYBOARD'
 
 // Demo snapshot of a campaign mid-pipeline — no live polling yet (see PRODUCT.md).
 // Strategy/Copy are done, Storyboard is actively generating, Images/Voiceover/Video
@@ -81,4 +89,5 @@ export const STATUS_LABEL: Record<AssetStatus, string> = {
   pending: 'Not started',
   generating: 'Generating…',
   ready: 'Ready',
+  failed: "Couldn't generate",
 }

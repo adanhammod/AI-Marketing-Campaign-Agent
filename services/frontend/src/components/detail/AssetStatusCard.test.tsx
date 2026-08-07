@@ -111,4 +111,17 @@ describe('AssetStatusCard', () => {
 
     expect(screen.queryByText(/positioning|words|px|·/)).not.toBeInTheDocument()
   })
+
+  it("marks a failed asset with data-status='failed' and the couldn't-generate label", () => {
+    render(<AssetStatusCard asset={asset({ status: 'failed' })} />)
+
+    expect(screen.getByRole('listitem')).toHaveAttribute('data-status', 'failed')
+    expect(screen.getByText("Couldn't generate")).toBeInTheDocument()
+  })
+
+  it('keeps the placeholder canvas (not real images) when a failed images asset is shown', () => {
+    render(<AssetStatusCard asset={asset({ status: 'failed' })} />)
+
+    expect(screen.queryAllByRole('img')).toHaveLength(0)
+  })
 })

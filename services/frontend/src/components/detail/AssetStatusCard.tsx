@@ -1,4 +1,4 @@
-import { CheckIcon, CopyIcon, VideoIcon } from '../creation/icons'
+import { AlertIcon, CheckIcon, CopyIcon, VideoIcon } from '../creation/icons'
 import styles from './AssetStatusCard.module.css'
 import {
   STATUS_LABEL,
@@ -130,6 +130,9 @@ export function AssetStatusCard({ asset }: AssetStatusCardProps) {
     >
       <span className={styles.readyBadge} aria-hidden="true">
         <CheckIcon className={styles.readyBadgeIcon} />
+      </span>
+      <span className={styles.failedBadge} aria-hidden="true">
+        <AlertIcon className={styles.failedBadgeIcon} />
       </span>
       <div className={styles.shapeWrap}>
         <div aria-hidden={!(asset.key === 'images' && asset.status === 'ready')}>

@@ -101,7 +101,9 @@
   height: 1.5rem;
   border-radius: var(--radius-pill);
   background: var(--color-emerald);
-  color: var(--color-surface);
+  /* Ink, not white — measured ~2.5:1 white-on-emerald, under the 3:1 non-text
+     minimum. Ink measures 6.4:1+. */
+  color: var(--color-ink);
   box-shadow: 0 4px 10px rgba(16, 185, 129, 0.35);
   opacity: 0;
   transform: scale(0.9);
@@ -119,6 +121,37 @@
   width: 0.85rem;
   height: 0.85rem;
   stroke-width: 3;
+}
+
+.failedBadge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-danger);
+  color: var(--color-surface);
+  box-shadow: 0 4px 10px rgba(179, 38, 30, 0.35);
+  opacity: 0;
+  transform: scale(0.9);
+  transition:
+    opacity 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.card[data-status='failed'] .failedBadge {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.failedBadgeIcon {
+  width: 0.85rem;
+  height: 0.85rem;
+  stroke-width: 2.5;
 }
 
 .cardHeader {
@@ -159,6 +192,11 @@
 .statusBadge[data-status='ready'] {
   color: var(--color-emerald-ink);
   background: var(--color-emerald-soft);
+}
+
+.statusBadge[data-status='failed'] {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
 }
 
 .cardDescription {
