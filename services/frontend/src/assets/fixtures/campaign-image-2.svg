@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" role="img" aria-label="Lifestyle summer scene illustration for a campaign social post">
+  <rect width="640" height="400" rx="24" fill="#eaf7fe" />
+
+  <circle cx="118" cy="96" r="46" fill="#f59e0b" />
+  <circle cx="118" cy="96" r="66" fill="#f59e0b" opacity="0.14" />
+
+  <path d="M0 262 C 140 232, 260 292, 400 258 C 500 234, 580 268, 640 250 L 640 400 L 0 400 Z" fill="#e3f8f5" />
+  <path d="M0 300 C 150 276, 280 320, 420 296 C 520 278, 580 306, 640 292 L 640 400 L 0 400 Z" fill="#38bdf8" opacity="0.22" />
+  <path d="M0 340 C 160 320, 300 356, 460 336 C 540 326, 590 344, 640 336 L 640 400 L 0 400 Z" fill="#14b8a6" opacity="0.3" />
+
+  <rect x="0" y="356" width="640" height="44" fill="#fdf6ee" />
+
+  <rect x="392" y="196" width="8" height="120" rx="4" fill="#172033" opacity="0.75" />
+  <path d="M396 196 C 330 150, 462 150, 396 196 Z" fill="#fb7156" />
+  <path d="M396 196 C 396 150, 462 150, 396 196 Z" fill="#f59e0b" />
+  <path d="M396 196 C 330 150, 396 150, 396 196 Z" fill="#fb7156" opacity="0.85" />
+
+  <ellipse cx="396" cy="318" rx="46" ry="10" fill="#172033" opacity="0.08" />
+
+  <circle cx="220" cy="330" r="16" fill="#4f46e5" opacity="0.85" />
+  <circle cx="252" cy="344" r="9" fill="#fb7156" opacity="0.85" />
+</svg>

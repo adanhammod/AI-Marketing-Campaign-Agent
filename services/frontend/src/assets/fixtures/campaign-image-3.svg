@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" role="img" aria-label="Abstract pattern illustration representing campaign visual variety">
+  <rect width="640" height="400" rx="24" fill="#eef6fa" />
+
+  <g opacity="0.9">
+    <circle cx="96" cy="88" r="20" fill="#fb7156" />
+    <circle cx="168" cy="60" r="10" fill="#14b8a6" opacity="0.7" />
+    <circle cx="230" cy="120" r="15" fill="#f59e0b" opacity="0.8" />
+    <circle cx="150" cy="160" r="7" fill="#4f46e5" opacity="0.6" />
+    <circle cx="320" cy="80" r="26" fill="#38bdf8" opacity="0.5" />
+    <circle cx="392" cy="150" r="12" fill="#10b981" opacity="0.75" />
+    <circle cx="300" cy="190" r="9" fill="#fb7156" opacity="0.55" />
+    <circle cx="470" cy="96" r="17" fill="#f59e0b" opacity="0.65" />
+    <circle cx="540" cy="150" r="24" fill="#14b8a6" opacity="0.45" />
+    <circle cx="480" cy="200" r="8" fill="#4f46e5" opacity="0.5" />
+    <circle cx="130" cy="260" r="13" fill="#38bdf8" opacity="0.6" />
+    <circle cx="220" cy="300" r="22" fill="#fb7156" opacity="0.4" />
+    <circle cx="340" cy="270" r="10" fill="#f59e0b" opacity="0.7" />
+    <circle cx="420" cy="320" r="16" fill="#10b981" opacity="0.55" />
+    <circle cx="520" cy="290" r="11" fill="#4f46e5" opacity="0.6" />
+    <circle cx="580" cy="230" r="19" fill="#38bdf8" opacity="0.4" />
+  </g>
+
+  <g transform="rotate(-8 130 90)">
+    <rect x="-40" y="60" width="260" height="64" rx="16" fill="#4f46e5" />
+    <rect x="-40" y="60" width="260" height="64" rx="16" fill="#2563eb" opacity="0.18" />
+  </g>
+
+  <rect x="248" y="330" width="144" height="14" rx="7" fill="#172033" opacity="0.1" />
+  <rect x="272" y="352" width="96" height="10" rx="5" fill="#172033" opacity="0.08" />
+</svg>

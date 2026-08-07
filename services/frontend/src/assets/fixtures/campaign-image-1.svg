@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" role="img" aria-label="Product hero illustration for a summer product launch">
+  <rect width="640" height="400" rx="24" fill="#fff1ed" />
+
+  <circle cx="480" cy="120" r="150" fill="#f59e0b" opacity="0.08" />
+  <circle cx="480" cy="120" r="100" fill="#f59e0b" opacity="0.12" />
+  <circle cx="480" cy="120" r="52" fill="#f59e0b" />
+
+  <ellipse cx="270" cy="356" rx="90" ry="14" fill="#172033" opacity="0.08" />
+
+  <rect x="235" y="150" width="110" height="190" rx="26" fill="#fb7156" />
+  <rect x="258" y="108" width="64" height="52" rx="14" fill="#fb7156" />
+  <rect x="258" y="108" width="64" height="52" rx="14" fill="#172033" opacity="0.14" />
+  <rect x="251" y="214" width="98" height="58" rx="12" fill="#ffffff" opacity="0.92" />
+  <rect x="265" y="228" width="70" height="8" rx="4" fill="#fb7156" opacity="0.35" />
+  <rect x="265" y="244" width="46" height="8" rx="4" fill="#fb7156" opacity="0.35" />
+
+  <circle cx="345" cy="150" r="20" fill="#10b981" />
+  <path d="M337 150 L343 156 L354 143" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+
+  <path d="M120 90 L132 90" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.5" />
+  <path d="M104 112 L120 112" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.35" />
+  <path d="M126 134 L146 134" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.25" />
+</svg>
