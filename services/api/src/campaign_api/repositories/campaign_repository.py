@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignVersion
+from campaign_contracts.campaign import ApprovalRecord, CampaignAggregateMetadata, CampaignVersion
 
 
 class CampaignRepository(ABC):
@@ -15,6 +15,10 @@ class CampaignRepository(ABC):
     async def exists(self, campaign_id: UUID) -> bool: ...
     @abstractmethod
     async def replace_current(self, aggregate: CampaignAggregateMetadata, version: CampaignVersion) -> None: ...
+    @abstractmethod
+    async def approve(
+        self, aggregate: CampaignAggregateMetadata, version: CampaignVersion, approval: ApprovalRecord
+    ) -> None: ...
     @abstractmethod
     async def rollback_initial(self, campaign_id: UUID) -> None: ...
     @abstractmethod

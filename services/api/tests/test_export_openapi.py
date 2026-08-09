@@ -12,6 +12,7 @@ def test_build_schema_includes_the_live_routes():
     assert set(schema["paths"]) == {
         "/api/v1/campaigns",
         "/api/v1/campaigns/{campaign_id}",
+        "/api/v1/campaigns/{campaign_id}/versions/{version}/approve",
         "/health/live",
         "/health/ready",
     }

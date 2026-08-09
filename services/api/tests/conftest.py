@@ -1,7 +1,18 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
+from campaign_contracts.campaign import (
+    CampaignAggregateMetadata,
+    CampaignConstraints,
+    CampaignVersion,
+    NormalizedCampaignBrief,
+    RetryMetadata,
+    ReviewPackage,
+)
+from campaign_contracts.enums import CampaignStatus
 from fastapi.testclient import TestClient
 
 from campaign_api.config import Settings
@@ -44,3 +55,54 @@ def valid_request():
 @pytest.fixture
 def headers():
     return {"Idempotency-Key": "task6-test", "X-Request-ID": "018f0000-0000-7000-8000-000000000099"}
+
+
+@pytest.fixture
+def approval_checksum():
+    return "a" * 64
+
+
+@pytest.fixture
+def ready_for_review_campaign(repository, approval_checksum):
+    """Returns an async factory that persists a READY_FOR_REVIEW campaign with a matching
+    review_package and returns (campaign_id, original_start_job_id)."""
+
+    async def _create(checksum: str | None = None) -> tuple:
+        campaign_id = uuid4()
+        job_id = uuid4()
+        now = datetime.now(UTC)
+        brief = NormalizedCampaignBrief.model_validate(
+            json.loads((ROOT / "shared/fixtures/valid/api-create.json").read_text())
+        )
+        aggregate = CampaignAggregateMetadata(
+            campaign_id=campaign_id,
+            current_version=1,
+            title="Test Campaign",
+            created_at=now,
+            updated_at=now,
+            lock_version=0,
+            event_sequence=0,
+            current_status=CampaignStatus.READY_FOR_REVIEW,
+            current_progress=95,
+        )
+        version = CampaignVersion(
+            campaign_id=campaign_id,
+            campaign_version=1,
+            job_id=job_id,
+            status=CampaignStatus.READY_FOR_REVIEW,
+            current_step=None,
+            progress_percent=95,
+            brief=brief,
+            constraints=CampaignConstraints(),
+            review_package=ReviewPackage(
+                artifact_id=uuid4(), manifest_checksum=checksum or approval_checksum, artifact_ids=[uuid4()]
+            ),
+            completed_steps=[],
+            retry=RetryMetadata(),
+            created_at=now,
+            updated_at=now,
+        )
+        await repository.create_initial(aggregate, version)
+        return campaign_id, job_id
+
+    return _create

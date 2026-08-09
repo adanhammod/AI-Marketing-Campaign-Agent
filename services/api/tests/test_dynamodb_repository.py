@@ -1,10 +1,17 @@
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 import boto3
 import pytest
 from campaign_contracts.api import CampaignCreationRequest
-from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignConstraints, CampaignVersion, RetryMetadata
+from campaign_contracts.campaign import (
+    ApprovalRecord,
+    CampaignAggregateMetadata,
+    CampaignConstraints,
+    CampaignVersion,
+    RetryMetadata,
+    ReviewPackage,
+)
 from campaign_contracts.enums import CampaignStatus
 from fastapi.testclient import TestClient
 from moto import mock_aws
@@ -82,6 +89,19 @@ def records():
     return aggregate, version
 
 
+def ready_for_review_records():
+    aggregate, version = records()
+    checksum = "a" * 64
+    ready_aggregate = aggregate.model_copy(update={"current_status": CampaignStatus.READY_FOR_REVIEW})
+    ready_version = version.model_copy(
+        update={
+            "status": CampaignStatus.READY_FOR_REVIEW,
+            "review_package": ReviewPackage(artifact_id=uuid4(), manifest_checksum=checksum, artifact_ids=[uuid4()]),
+        }
+    )
+    return ready_aggregate, ready_version, checksum
+
+
 @pytest.fixture
 def dynamodb():
     with mock_aws():
@@ -129,6 +149,91 @@ async def test_optimistic_replace_and_conflict(repository):
     assert found is not None and found[1].status == CampaignStatus.QUEUED and found[1].lock_version == 1
     with pytest.raises(InvalidStateTransition):
         await repository.replace_current(queued_a, queued_v)
+
+
+@pytest.mark.asyncio
+async def test_approve_persists_new_job_id_and_approval_item(repository, dynamodb):
+    aggregate, version, checksum = ready_for_review_records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    resume_job_id = uuid5(version.campaign_id, f"RESUME:{version.campaign_version}")
+    approval = ApprovalRecord(
+        approval_id=uuid4(),
+        campaign_id=version.campaign_id,
+        campaign_version=version.campaign_version,
+        approved_at=now,
+        manifest_checksum=checksum,
+        note=None,
+        created_at=now,
+    )
+    approved_version = version.model_copy(
+        update={
+            "status": CampaignStatus.APPROVED,
+            "job_id": resume_job_id,
+            "approval": approval,
+            "progress_percent": 98,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    approved_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.APPROVED, "current_progress": 98, "updated_at": now, "lock_version": 1}
+    )
+
+    await repository.approve(approved_aggregate, approved_version, approval)
+
+    # the raw VERSION item's job_id attribute is exactly what the worker's lease
+    # acquisition ConditionExpression compares against -- prove it directly, not just
+    # via the round-tripped Pydantic model.
+    raw = dynamodb.get_item(
+        TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "VERSION#1"}}
+    )["Item"]
+    assert raw["job_id"]["S"] == str(resume_job_id)
+    assert raw["status"]["S"] == "APPROVED"
+
+    found = await repository.get(aggregate.campaign_id)
+    assert found is not None
+    assert found[1].job_id == resume_job_id
+    assert found[1].approval is not None and found[1].approval.manifest_checksum == checksum
+
+    approval_item = dynamodb.get_item(
+        TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "APPROVAL#1"}}
+    ).get("Item")
+    assert approval_item is not None and approval_item["decision"]["S"] == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_approve_conflicts_on_concurrent_double_approval(repository):
+    aggregate, version, checksum = ready_for_review_records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    resume_job_id = uuid5(version.campaign_id, f"RESUME:{version.campaign_version}")
+    approval = ApprovalRecord(
+        approval_id=uuid4(),
+        campaign_id=version.campaign_id,
+        campaign_version=version.campaign_version,
+        approved_at=now,
+        manifest_checksum=checksum,
+        note=None,
+        created_at=now,
+    )
+    approved_version = version.model_copy(
+        update={
+            "status": CampaignStatus.APPROVED,
+            "job_id": resume_job_id,
+            "approval": approval,
+            "progress_percent": 98,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    approved_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.APPROVED, "current_progress": 98, "updated_at": now, "lock_version": 1}
+    )
+    await repository.approve(approved_aggregate, approved_version, approval)
+
+    with pytest.raises(InvalidStateTransition):
+        await repository.approve(approved_aggregate, approved_version, approval)
 
 
 @pytest.mark.asyncio

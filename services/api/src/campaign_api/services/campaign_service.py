@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from campaign_contracts.api import (
+    ApprovalRequest,
+    ApprovalResponse,
     CampaignCreationAcceptedResponse,
     CampaignCreationRequest,
     CampaignDetailResponse,
@@ -9,10 +11,12 @@ from campaign_contracts.api import (
     CampaignSummary,
 )
 from campaign_contracts.campaign import (
+    ApprovalRecord,
     CampaignAggregateMetadata,
     CampaignConstraints,
     CampaignVersion,
     RetryMetadata,
+    validate_approval_target,
 )
 from campaign_contracts.enums import CampaignStatus, SQSOperation
 from campaign_contracts.sqs import SQSJobMessage
@@ -21,6 +25,7 @@ from campaign_api.exceptions import (
     CampaignNotFound,
     DuplicateCampaign,
     DuplicateJobConflict,
+    InvalidStateTransition,
     QueueSubmissionAmbiguousFailure,
     QueueSubmissionFailure,
 )
@@ -132,6 +137,93 @@ class CampaignService:
             status=CampaignStatus.QUEUED,
             progress_percent=2,
             links={"self": f"/api/v1/campaigns/{campaign_id}", "events": f"/api/v1/campaigns/{campaign_id}/events"},
+        )
+
+    async def approve(
+        self, campaign_id: UUID, campaign_version: int, request: ApprovalRequest, correlation_id: UUID
+    ) -> ApprovalResponse:
+        record = await self.repository.get(campaign_id)
+        if record is None:
+            raise CampaignNotFound("campaign not found")
+        aggregate, current = record
+        if current.campaign_version != campaign_version:
+            raise InvalidStateTransition("approval must target the current campaign version")
+
+        existing_approval = current.approval
+        approval: ApprovalRecord
+        if current.status == CampaignStatus.APPROVED and existing_approval is not None:
+            if (
+                existing_approval.manifest_checksum != request.review_manifest_checksum
+                or existing_approval.note != request.note
+            ):
+                raise DuplicateJobConflict("approval already recorded with a different request")
+            approval = existing_approval
+        else:
+            try:
+                validate_approval_target(aggregate, current)
+            except ValueError as exc:
+                raise InvalidStateTransition(str(exc)) from None
+            if (
+                current.review_package is None
+                or current.review_package.manifest_checksum != request.review_manifest_checksum
+            ):
+                raise InvalidStateTransition("review manifest checksum does not match")
+            now = datetime.now(UTC)
+            resume_job_id = uuid5(current.campaign_id, f"RESUME:{current.campaign_version}")
+            approval = ApprovalRecord(
+                approval_id=uuid4(),
+                campaign_id=current.campaign_id,
+                campaign_version=current.campaign_version,
+                approved_at=now,
+                manifest_checksum=request.review_manifest_checksum,
+                note=request.note,
+                created_at=now,
+            )
+            updated_version = current.model_copy(
+                update={
+                    "status": CampaignStatus.APPROVED,
+                    "job_id": resume_job_id,
+                    "approval": approval,
+                    "progress_percent": 98,
+                    "updated_at": now,
+                    "lock_version": current.lock_version + 1,
+                }
+            )
+            updated_aggregate = aggregate.model_copy(
+                update={
+                    "current_status": CampaignStatus.APPROVED,
+                    "current_progress": 98,
+                    "updated_at": now,
+                    "lock_version": aggregate.lock_version + 1,
+                }
+            )
+            await self.repository.approve(updated_aggregate, updated_version, approval)
+            current = updated_version
+
+        message = SQSJobMessage(
+            schema_version=1,
+            job_id=current.job_id,
+            campaign_id=current.campaign_id,
+            campaign_version=current.campaign_version,
+            operation=SQSOperation.RESUME,
+            requested_step=None,
+            revision_scope=None,
+            idempotency_key=str(current.job_id),
+            correlation_id=correlation_id,
+            requested_at=approval.approved_at,
+            attempt=0,
+            trace_id=correlation_id.hex,
+        )
+        result = await self.queue.submit(message)
+        if not result.accepted or result.job_id != message.job_id:
+            raise QueueSubmissionFailure("queue submission failed")
+
+        return ApprovalResponse(
+            campaign_id=current.campaign_id,
+            campaign_version=current.campaign_version,
+            approval_id=approval.approval_id,
+            status=CampaignStatus.APPROVED,
+            job_id=current.job_id,
         )
 
     @staticmethod
