@@ -12,7 +12,7 @@ from campaign_contracts.campaign import (
     RetryMetadata,
     ReviewPackage,
 )
-from campaign_contracts.enums import CampaignStatus
+from campaign_contracts.enums import CampaignStatus, WorkflowStep
 from fastapi.testclient import TestClient
 from moto import mock_aws
 
@@ -389,6 +389,61 @@ async def test_cancel_vs_approve_race_lock_conflict(repository):
     # The approval is untouched -- cancel's stale write did not corrupt state.
     found = await repository.get(aggregate.campaign_id)
     assert found is not None and found[1].status == CampaignStatus.APPROVED
+
+
+def _failed_records():
+    aggregate, version = records()
+    retry_meta = RetryMetadata(attempt=1, max_attempts=3, retryable=True, resume_step=WorkflowStep.IMAGES)
+    failed_aggregate = aggregate.model_copy(update={"current_status": CampaignStatus.FAILED})
+    failed_version = version.model_copy(update={"status": CampaignStatus.FAILED, "retry": retry_meta})
+    return failed_aggregate, failed_version
+
+
+@pytest.mark.asyncio
+async def test_retry_persists_status_and_job_id(repository, dynamodb):
+    aggregate, version = _failed_records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    retry_job_id = uuid5(version.campaign_id, f"RETRY:{version.campaign_version}:{version.retry.attempt}")
+    queued_version = version.model_copy(
+        update={"status": CampaignStatus.QUEUED, "job_id": retry_job_id, "updated_at": now, "lock_version": 1}
+    )
+    queued_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.QUEUED, "updated_at": now, "lock_version": 1}
+    )
+
+    await repository.retry(queued_aggregate, queued_version)
+
+    raw = dynamodb.get_item(
+        TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "VERSION#1"}}
+    )["Item"]
+    assert raw["status"]["S"] == "QUEUED"
+    assert raw["job_id"]["S"] == str(retry_job_id)
+
+    found = await repository.get(aggregate.campaign_id)
+    assert found is not None
+    assert found[1].status == CampaignStatus.QUEUED
+    assert found[1].job_id == retry_job_id
+    # RetryMetadata is worker-owned; retry() must not touch it.
+    assert found[1].retry == version.retry
+
+
+@pytest.mark.asyncio
+async def test_retry_conflicts_on_concurrent_double_retry(repository):
+    aggregate, version = _failed_records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    retry_job_id = uuid5(version.campaign_id, f"RETRY:{version.campaign_version}:{version.retry.attempt}")
+    queued_version = version.model_copy(
+        update={"status": CampaignStatus.QUEUED, "job_id": retry_job_id, "updated_at": now, "lock_version": 1}
+    )
+    queued_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.QUEUED, "updated_at": now, "lock_version": 1}
+    )
+    await repository.retry(queued_aggregate, queued_version)
+
+    with pytest.raises(InvalidStateTransition):
+        await repository.retry(queued_aggregate, queued_version)
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,8 @@ from campaign_contracts.api import (
     CancellationResponse,
     ConflictError,
     NotFoundError,
+    RetryRequest,
+    RetryResponse,
     StandardValidationError,
 )
 from fastapi import APIRouter, Depends, Header, Path, Query, Response, status
@@ -110,3 +112,25 @@ async def cancel_campaign(
     if result.cancellation_pending:
         response.status_code = status.HTTP_202_ACCEPTED
     return result
+
+
+@router.post(
+    "/{campaign_id}/versions/{version}/retry",
+    response_model=RetryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        404: {"model": NotFoundError},
+        409: {"model": ConflictError},
+        422: {"model": StandardValidationError},
+        503: {"model": StandardValidationError},
+    },
+)
+async def retry_campaign(
+    campaign_id: UUID,
+    version: Annotated[int, Path(ge=1)],
+    body: RetryRequest,
+    service: Annotated[CampaignService, Depends(get_service)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+) -> RetryResponse:
+    del idempotency_key  # required by the mutation contract; retry identity is the durable record itself
+    return await service.retry(campaign_id, version, body, correlation_id())

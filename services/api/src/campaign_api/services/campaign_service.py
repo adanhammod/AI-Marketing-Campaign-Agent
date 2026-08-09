@@ -11,6 +11,8 @@ from campaign_contracts.api import (
     CampaignSummary,
     CancellationRequest,
     CancellationResponse,
+    RetryRequest,
+    RetryResponse,
 )
 from campaign_contracts.campaign import (
     ApprovalRecord,
@@ -289,6 +291,83 @@ class CampaignService:
             campaign_version=updated_version.campaign_version,
             status=CampaignStatus.CANCELLED,
             cancellation_pending=pending,
+        )
+
+    async def retry(
+        self, campaign_id: UUID, campaign_version: int, request: RetryRequest, correlation_id: UUID
+    ) -> RetryResponse:
+        del request  # RetryRequest carries no fields; retry identity is the durable record itself
+        record = await self.repository.get(campaign_id)
+        if record is None:
+            raise CampaignNotFound("campaign not found")
+        aggregate, current = record
+        if current.campaign_version != campaign_version:
+            raise InvalidStateTransition("retry must target the current campaign version")
+
+        now = datetime.now(UTC)
+
+        if current.status == CampaignStatus.FAILED:
+            if not current.retry.retryable:
+                raise InvalidStateTransition("campaign is not in a retryable state")
+            try:
+                validate_transition(current.status, CampaignStatus.QUEUED)  # type: ignore[no-untyped-call]
+            except ValueError as exc:
+                raise InvalidStateTransition(str(exc)) from None
+
+            retry_job_id = uuid5(current.campaign_id, f"RETRY:{current.campaign_version}:{current.retry.attempt}")
+            updated_version = current.model_copy(
+                update={
+                    "status": CampaignStatus.QUEUED,
+                    "job_id": retry_job_id,
+                    "updated_at": now,
+                    "lock_version": current.lock_version + 1,
+                }
+            )
+            updated_aggregate = aggregate.model_copy(
+                update={
+                    "current_status": CampaignStatus.QUEUED,
+                    "updated_at": now,
+                    "lock_version": aggregate.lock_version + 1,
+                }
+            )
+            await self.repository.retry(updated_aggregate, updated_version)
+            current = updated_version
+        elif current.status == CampaignStatus.QUEUED:
+            expected_job_id = uuid5(current.campaign_id, f"RETRY:{current.campaign_version}:{current.retry.attempt}")
+            if current.job_id != expected_job_id:
+                raise InvalidStateTransition("campaign is not awaiting this retry attempt")
+        else:
+            raise InvalidStateTransition("campaign is not in a retryable state")
+
+        resume_step = current.retry.resume_step
+        if resume_step is None:
+            raise InvalidStateTransition("failed campaign is missing a resume step")
+
+        message = SQSJobMessage(
+            schema_version=1,
+            job_id=current.job_id,
+            campaign_id=current.campaign_id,
+            campaign_version=current.campaign_version,
+            operation=SQSOperation.START,
+            requested_step=None,
+            revision_scope=None,
+            idempotency_key=str(current.job_id),
+            correlation_id=correlation_id,
+            requested_at=current.updated_at,
+            attempt=0,
+            trace_id=correlation_id.hex,
+        )
+        result = await self.queue.submit(message)
+        if not result.accepted or result.job_id != message.job_id:
+            raise QueueSubmissionFailure("queue submission failed")
+
+        return RetryResponse(
+            campaign_id=current.campaign_id,
+            campaign_version=current.campaign_version,
+            job_id=current.job_id,
+            status=CampaignStatus.QUEUED,
+            resume_step=resume_step,
+            attempt=current.retry.attempt,
         )
 
     @staticmethod

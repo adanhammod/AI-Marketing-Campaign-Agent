@@ -68,6 +68,15 @@ class InMemoryCampaignRepository(CampaignRepository):
                 raise RepositoryFailure("immutable version mismatch")
             self._records[aggregate.campaign_id] = (aggregate.model_copy(deep=True), version.model_copy(deep=True))
 
+    async def retry(self, aggregate: CampaignAggregateMetadata, version: CampaignVersion) -> None:
+        async with self._lock:
+            current = self._records.get(aggregate.campaign_id)
+            if current is None:
+                raise RepositoryFailure("campaign missing during update")
+            if current[1].campaign_version != version.campaign_version:
+                raise RepositoryFailure("immutable version mismatch")
+            self._records[aggregate.campaign_id] = (aggregate.model_copy(deep=True), version.model_copy(deep=True))
+
     async def rollback_initial(self, campaign_id: UUID) -> None:
         async with self._lock:
             self._records.pop(campaign_id, None)

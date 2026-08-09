@@ -336,6 +336,68 @@ class DynamoDBCampaignRepository(CampaignRepository):
                 raise InvalidStateTransition("campaign optimistic-lock conflict") from None
             raise RepositoryFailure("campaign update unavailable") from None
 
+    async def retry(self, aggregate: CampaignAggregateMetadata, version: CampaignVersion) -> None:
+        expected_meta_lock = aggregate.lock_version - 1
+        expected_version_lock = version.lock_version - 1
+        if expected_meta_lock < 0 or expected_version_lock < 0:
+            raise InvalidStateTransition("lock version must advance by one")
+        values = {
+            ":status": _SERIALIZER.serialize(version.status.value),
+            ":updated": _SERIALIZER.serialize(version.updated_at.isoformat().replace("+00:00", "Z")),
+            ":new_lock": _SERIALIZER.serialize(version.lock_version),
+            ":old_meta_lock": _SERIALIZER.serialize(expected_meta_lock),
+            ":old_version_lock": _SERIALIZER.serialize(expected_version_lock),
+            ":version_number": _SERIALIZER.serialize(version.campaign_version),
+            ":gsi2pk": _SERIALIZER.serialize(f"STATUS#{version.status.value}"),
+            ":gsi2sk": _SERIALIZER.serialize(f"{version.updated_at.isoformat()}#{version.campaign_id}"),
+            ":job_id": _SERIALIZER.serialize(str(version.job_id)),
+        }
+        transaction = [
+            {
+                "Update": {
+                    "TableName": self._table_name,
+                    "Key": _marshal_item({"PK": pk(aggregate.campaign_id), "SK": meta_sk()}),
+                    "UpdateExpression": (
+                        "SET current_status=:status, updated_at=:updated, lock_version=:new_lock, "
+                        "GSI2PK=:gsi2pk, GSI2SK=:gsi2sk"
+                    ),
+                    "ConditionExpression": "lock_version=:old_meta_lock AND current_version=:version_number",
+                    "ExpressionAttributeValues": {
+                        key: values[key]
+                        for key in (
+                            ":status",
+                            ":updated",
+                            ":new_lock",
+                            ":old_meta_lock",
+                            ":version_number",
+                            ":gsi2pk",
+                            ":gsi2sk",
+                        )
+                    },
+                }
+            },
+            {
+                "Update": {
+                    "TableName": self._table_name,
+                    "Key": _marshal_item({"PK": pk(version.campaign_id), "SK": version_sk(version.campaign_version)}),
+                    "UpdateExpression": (
+                        "SET #status=:status, updated_at=:updated, lock_version=:new_lock, job_id=:job_id"
+                    ),
+                    "ConditionExpression": "lock_version=:old_version_lock",
+                    "ExpressionAttributeNames": {"#status": "status"},
+                    "ExpressionAttributeValues": {
+                        key: values[key] for key in (":status", ":updated", ":new_lock", ":old_version_lock", ":job_id")
+                    },
+                }
+            },
+        ]
+        try:
+            await asyncio.to_thread(self._client.transact_write_items, TransactItems=transaction)
+        except ClientError as exc:
+            if self._is_conditional(exc):
+                raise InvalidStateTransition("campaign optimistic-lock conflict") from None
+            raise RepositoryFailure("campaign update unavailable") from None
+
     async def rollback_initial(self, campaign_id: UUID) -> None:
         transaction = [
             {
