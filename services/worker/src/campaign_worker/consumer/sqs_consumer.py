@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
+from campaign_contracts.enums import CampaignStatus
 from campaign_contracts.sqs import SQSJobMessage
 from pydantic import ValidationError
 
@@ -131,6 +132,8 @@ class SQSConsumer:
                 extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)},
             )
             return MessageOutcome.UNCERTAIN
+        if version.status == CampaignStatus.CANCELLED:
+            return await self._ack_without_processing(received, message, "cancelled_before_lease")
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self._settings.visibility_timeout_seconds - 1)
         try:
@@ -138,6 +141,15 @@ class SQSConsumer:
         except LeaseConflict:
             _LOG.info("lease_conflict", extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)})
             return MessageOutcome.LEASE_CONFLICT
+        # Re-check status after acquiring the lease: a cancellation may have landed in
+        # the narrow window between the read above and the lease transaction committing.
+        revalidated = await self._repository.load_version(message)
+        if revalidated is not None and revalidated.status == CampaignStatus.CANCELLED:
+            try:
+                await self._repository.release(message, lease)
+            except (LeaseLost, PersistenceUnavailable):
+                return MessageOutcome.UNCERTAIN
+            return await self._ack_without_processing(received, message, "cancelled_after_lease")
         if await self._repository.is_completed(message):
             try:
                 await self._repository.release(message, lease)
@@ -163,6 +175,16 @@ class SQSConsumer:
             stop.set()
             if not heartbeat.done():
                 await heartbeat
+        try:
+            await self._delete(received.receipt_handle)
+        except ProcessingUncertain:
+            return MessageOutcome.UNCERTAIN
+        return MessageOutcome.ACKNOWLEDGED
+
+    async def _ack_without_processing(
+        self, received: ReceivedMessage, message: SQSJobMessage, reason: str
+    ) -> MessageOutcome:
+        _LOG.info(reason, extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)})
         try:
             await self._delete(received.receipt_handle)
         except ProcessingUncertain:

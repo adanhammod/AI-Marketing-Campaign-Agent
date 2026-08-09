@@ -237,6 +237,161 @@ async def test_approve_conflicts_on_concurrent_double_approval(repository):
 
 
 @pytest.mark.asyncio
+async def test_cancel_persists_reason_and_timestamp(repository, dynamodb):
+    aggregate, version = records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    cancelled_version = version.model_copy(
+        update={
+            "status": CampaignStatus.CANCELLED,
+            "cancellation_reason": "User stopped generation",
+            "cancelled_at": now,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    cancelled_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.CANCELLED, "updated_at": now, "lock_version": 1}
+    )
+
+    await repository.cancel(cancelled_aggregate, cancelled_version)
+
+    raw = dynamodb.get_item(
+        TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "VERSION#1"}}
+    )["Item"]
+    assert raw["status"]["S"] == "CANCELLED"
+    assert raw["cancellation_reason"]["S"] == "User stopped generation"
+    assert "cancelled_at" in raw
+
+    found = await repository.get(aggregate.campaign_id)
+    assert found is not None
+    assert found[1].status == CampaignStatus.CANCELLED
+    assert found[1].cancellation_reason == "User stopped generation"
+    assert found[1].cancelled_at is not None
+    # artifacts/content fields are untouched by cancel()
+    assert found[1].brief.model_dump(mode="json") == version.brief.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_cancel_conflicts_on_concurrent_double_cancel(repository):
+    aggregate, version = records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    cancelled_version = version.model_copy(
+        update={
+            "status": CampaignStatus.CANCELLED,
+            "cancellation_reason": "reason",
+            "cancelled_at": now,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    cancelled_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.CANCELLED, "updated_at": now, "lock_version": 1}
+    )
+    await repository.cancel(cancelled_aggregate, cancelled_version)
+
+    with pytest.raises(InvalidStateTransition):
+        await repository.cancel(cancelled_aggregate, cancelled_version)
+
+
+@pytest.mark.asyncio
+async def test_cancel_vs_worker_transition_lock_conflict(repository):
+    """Proves race #1 from the C2 plan: if a worker (or any other writer) advances
+    lock_version on the VERSION item between the API's read and its cancel() write,
+    the cancel() write is rejected rather than silently succeeding against stale data."""
+    aggregate, version = records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    # Simulate a worker's concurrent transition (e.g. QUEUED -> GENERATING_STRATEGY)
+    # advancing lock_version to 1 on both items, same shape as replace_current.
+    worker_advanced_version = version.model_copy(
+        update={"status": CampaignStatus.GENERATING_STRATEGY, "updated_at": now, "lock_version": 1}
+    )
+    worker_advanced_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.GENERATING_STRATEGY, "updated_at": now, "lock_version": 1}
+    )
+    await repository.replace_current(worker_advanced_aggregate, worker_advanced_version)
+
+    # The API had read the campaign before the worker's transition, so it still
+    # expects lock_version 0 -> 1, which is now stale (actual is already 1 -> 2).
+    stale_cancel_version = version.model_copy(
+        update={
+            "status": CampaignStatus.CANCELLED,
+            "cancellation_reason": "reason",
+            "cancelled_at": now,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    stale_cancel_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.CANCELLED, "updated_at": now, "lock_version": 1}
+    )
+    with pytest.raises(InvalidStateTransition):
+        await repository.cancel(stale_cancel_aggregate, stale_cancel_version)
+
+    # The worker's transition is untouched -- no partial/corrupted write occurred.
+    found = await repository.get(aggregate.campaign_id)
+    assert found is not None and found[1].status == CampaignStatus.GENERATING_STRATEGY
+
+
+@pytest.mark.asyncio
+async def test_cancel_vs_approve_race_lock_conflict(repository):
+    """Proves the cancel-vs-approve race from the C2 required-test list: if approve()
+    commits first (advancing lock_version and status to APPROVED), a stale cancel()
+    attempt that still expects the pre-approval lock_version is rejected rather than
+    silently reviving/overwriting the approved campaign."""
+    aggregate, version, checksum = ready_for_review_records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    resume_job_id = uuid5(version.campaign_id, f"RESUME:{version.campaign_version}")
+    approval = ApprovalRecord(
+        approval_id=uuid4(),
+        campaign_id=version.campaign_id,
+        campaign_version=version.campaign_version,
+        approved_at=now,
+        manifest_checksum=checksum,
+        note=None,
+        created_at=now,
+    )
+    approved_version = version.model_copy(
+        update={
+            "status": CampaignStatus.APPROVED,
+            "job_id": resume_job_id,
+            "approval": approval,
+            "progress_percent": 98,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    approved_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.APPROVED, "current_progress": 98, "updated_at": now, "lock_version": 1}
+    )
+    await repository.approve(approved_aggregate, approved_version, approval)
+
+    # The API had read the campaign before the approval committed, so its cancel
+    # attempt still expects lock_version 0 -> 1, which is now stale (actual is 1 -> 2).
+    stale_cancel_version = version.model_copy(
+        update={
+            "status": CampaignStatus.CANCELLED,
+            "cancellation_reason": "reason",
+            "cancelled_at": now,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    stale_cancel_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.CANCELLED, "updated_at": now, "lock_version": 1}
+    )
+    with pytest.raises(InvalidStateTransition):
+        await repository.cancel(stale_cancel_aggregate, stale_cancel_version)
+
+    # The approval is untouched -- cancel's stale write did not corrupt state.
+    found = await repository.get(aggregate.campaign_id)
+    assert found is not None and found[1].status == CampaignStatus.APPROVED
+
+
+@pytest.mark.asyncio
 async def test_guarded_rollback(repository):
     aggregate, version = records()
     await repository.create_initial(aggregate, version)

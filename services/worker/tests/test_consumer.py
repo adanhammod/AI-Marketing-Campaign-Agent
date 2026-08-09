@@ -7,7 +7,7 @@ import pytest
 from botocore.exceptions import ClientError
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata
-from campaign_contracts.enums import CampaignStatus, SQSOperation
+from campaign_contracts.enums import CampaignStatus, RevisionTarget, SQSOperation, WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage
 
 from campaign_worker.config import Settings
@@ -168,6 +168,18 @@ class StubSQS:
         return {"Attributes": {"ApproximateNumberOfMessages": "0"}}
 
 
+class SpyProcessor(JobProcessor):
+    """Records whether process() was ever invoked, to prove a guard short-circuited
+    before any provider/graph work could start."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def process(self, message, state, lease):
+        self.calls += 1
+        return ProcessingResult(True, "SHOULD_NOT_HAVE_BEEN_CALLED")
+
+
 class SlowProcessor(JobProcessor):
     def __init__(self, delay=0.04):
         self.delay = delay
@@ -207,6 +219,135 @@ async def test_valid_receive_success_and_durable_ack():
     assert await consumer.run_once() == [MessageOutcome.ACKNOWLEDGED]
     assert repository.completed and queue.deletes == ["opaque-receipt"]
     assert queue.receives == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_version_with_queued_start_message_is_acked_without_processing():
+    """A: CANCELLED version + queued START message -- processor never runs, message is acked."""
+    value = job()
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    repository.version = repository.version.model_copy(update={"status": CampaignStatus.CANCELLED})
+    processor = SpyProcessor()
+    consumer = SQSConsumer(queue, repository, processor, settings(), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value))
+
+    assert outcome == MessageOutcome.ACKNOWLEDGED
+    assert processor.calls == 0
+    assert queue.deletes == ["opaque-receipt"]
+    assert repository.lease is None
+    # E: cancellation is never reclassified as FAILED
+    assert repository.version.status == CampaignStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancelled_version_with_queued_resume_message_is_acked_without_processing():
+    """B: CANCELLED version + queued RESUME message -- same behavior as START."""
+    value = job().model_copy(update={"operation": SQSOperation.RESUME})
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    repository.version = repository.version.model_copy(
+        update={"status": CampaignStatus.CANCELLED, "job_id": value.job_id}
+    )
+    processor = SpyProcessor()
+    consumer = SQSConsumer(queue, repository, processor, settings(), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value))
+
+    assert outcome == MessageOutcome.ACKNOWLEDGED
+    assert processor.calls == 0
+    assert queue.deletes == ["opaque-receipt"]
+    assert repository.version.status == CampaignStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancelled_version_with_queued_regenerate_message_is_acked_without_processing():
+    """C: CANCELLED version + queued REGENERATE message -- same behavior, guard runs
+    before the (separately unsupported) REGENERATE branch inside the processor."""
+    value = job().model_copy(
+        update={
+            "operation": SQSOperation.REGENERATE,
+            "requested_step": WorkflowStep.STRATEGY,
+            "revision_scope": RevisionTarget.STRATEGY,
+        }
+    )
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    repository.version = repository.version.model_copy(
+        update={"status": CampaignStatus.CANCELLED, "job_id": value.job_id}
+    )
+    processor = SpyProcessor()
+    consumer = SQSConsumer(queue, repository, processor, settings(), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value))
+
+    assert outcome == MessageOutcome.ACKNOWLEDGED
+    assert processor.calls == 0
+    assert queue.deletes == ["opaque-receipt"]
+    assert repository.version.status == CampaignStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancellation_race_after_lease_acquire_is_still_caught():
+    """Closes the narrow TOCTOU window between load_version and acquire_lease: if the
+    campaign is cancelled in that window, the post-lease-acquire recheck must still
+    catch it rather than letting processing start."""
+    value = job()
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    calls = {"n": 0}
+
+    async def racing_load(message):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return repository.version
+        return repository.version.model_copy(update={"status": CampaignStatus.CANCELLED})
+
+    repository.load_version = racing_load
+    processor = SpyProcessor()
+    consumer = SQSConsumer(queue, repository, processor, settings(), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value))
+
+    assert outcome == MessageOutcome.ACKNOWLEDGED
+    assert processor.calls == 0
+    assert queue.deletes == ["opaque-receipt"]
+    assert repository.lease is None
+    assert calls["n"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_non_cancelled_start_message_processes_normally():
+    """F: a normal (non-cancelled) START message is unaffected by the new guard."""
+    value = job()
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    processor = SpyProcessor()
+    consumer = SQSConsumer(queue, repository, processor, settings(), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value))
+
+    assert outcome == MessageOutcome.ACKNOWLEDGED
+    assert processor.calls == 1
+    assert queue.deletes == ["opaque-receipt"]
+
+
+@pytest.mark.asyncio
+async def test_non_cancelled_resume_message_processes_normally():
+    """Regression: a normal (non-cancelled) RESUME message is unaffected by the new
+    guard, mirroring the START coverage in test_non_cancelled_start_message_processes_normally."""
+    value = job().model_copy(update={"operation": SQSOperation.RESUME})
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    processor = SpyProcessor()
+    consumer = SQSConsumer(queue, repository, processor, settings(), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value))
+
+    assert outcome == MessageOutcome.ACKNOWLEDGED
+    assert processor.calls == 1
+    assert queue.deletes == ["opaque-receipt"]
 
 
 @pytest.mark.parametrize(

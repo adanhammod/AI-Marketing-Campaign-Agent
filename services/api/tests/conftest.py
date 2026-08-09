@@ -106,3 +106,49 @@ def ready_for_review_campaign(repository, approval_checksum):
         return campaign_id, job_id
 
     return _create
+
+
+@pytest.fixture
+def campaign_at_status(repository):
+    """Returns an async factory that persists a campaign at an arbitrary status and
+    returns (campaign_id, job_id). Used by cancellation tests, which need coverage
+    across every source lifecycle status, not just READY_FOR_REVIEW."""
+
+    async def _create(status: CampaignStatus, **overrides: object) -> tuple:
+        campaign_id = uuid4()
+        job_id = uuid4()
+        now = datetime.now(UTC)
+        brief = NormalizedCampaignBrief.model_validate(
+            json.loads((ROOT / "shared/fixtures/valid/api-create.json").read_text())
+        )
+        version_fields: dict[str, object] = {
+            "campaign_id": campaign_id,
+            "campaign_version": 1,
+            "job_id": job_id,
+            "status": status,
+            "current_step": None,
+            "progress_percent": 10,
+            "brief": brief,
+            "constraints": CampaignConstraints(),
+            "completed_steps": [],
+            "retry": RetryMetadata(),
+            "created_at": now,
+            "updated_at": now,
+        }
+        version_fields.update(overrides)
+        version = CampaignVersion(**version_fields)
+        aggregate = CampaignAggregateMetadata(
+            campaign_id=campaign_id,
+            current_version=1,
+            title="Test Campaign",
+            created_at=now,
+            updated_at=now,
+            lock_version=0,
+            event_sequence=0,
+            current_status=status,
+            current_progress=version.progress_percent,
+        )
+        await repository.create_initial(aggregate, version)
+        return campaign_id, job_id
+
+    return _create

@@ -8,11 +8,13 @@ from campaign_contracts.api import (
     CampaignCreationRequest,
     CampaignDetailResponse,
     CampaignListResponse,
+    CancellationRequest,
+    CancellationResponse,
     ConflictError,
     NotFoundError,
     StandardValidationError,
 )
-from fastapi import APIRouter, Depends, Header, Path, Query, status
+from fastapi import APIRouter, Depends, Header, Path, Query, Response, status
 
 from campaign_api.config import Settings
 from campaign_api.dependencies import correlation_id, get_service, get_settings
@@ -80,3 +82,31 @@ async def approve_campaign(
 ) -> ApprovalResponse:
     del idempotency_key  # required by the mutation contract; approval identity is the durable record itself
     return await service.approve(campaign_id, version, body, correlation_id())
+
+
+@router.post(
+    "/{campaign_id}/versions/{version}/cancel",
+    response_model=CancellationResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": CancellationResponse},
+        202: {"model": CancellationResponse},
+        404: {"model": NotFoundError},
+        409: {"model": ConflictError},
+        422: {"model": StandardValidationError},
+        503: {"model": StandardValidationError},
+    },
+)
+async def cancel_campaign(
+    campaign_id: UUID,
+    version: Annotated[int, Path(ge=1)],
+    body: CancellationRequest,
+    response: Response,
+    service: Annotated[CampaignService, Depends(get_service)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+) -> CancellationResponse:
+    del idempotency_key  # required by the mutation contract; cancellation identity is the durable record itself
+    result = await service.cancel(campaign_id, version, body)
+    if result.cancellation_pending:
+        response.status_code = status.HTTP_202_ACCEPTED
+    return result

@@ -51,6 +51,13 @@ def test_approval_immutability_regeneration():
     with pytest.raises(ValueError): assert_version_immutable(v,ready_changed)
     assert earliest_regeneration_step(RevisionTarget.SELECTED_IMAGES)==WorkflowStep.IMAGES
 
+def test_cancellation_fields_round_trip():
+    v=CampaignVersion.model_validate(load(VALID/'queued-campaign.json'))
+    now=datetime(2026,7,28,tzinfo=timezone.utc)
+    cancelled=v.model_copy(update={'status':CampaignStatus.CANCELLED,'cancellation_reason':'User stopped generation','cancelled_at':now})
+    assert cancelled.cancellation_reason=='User stopped generation' and cancelled.cancelled_at==now
+    assert v.cancellation_reason is None and v.cancelled_at is None
+
 def test_public_error_rejects_unsafe_fields():
     from campaign_contracts.errors import SanitizedWorkflowError
     payload={"schema_version":1,"code":"INTERNAL_ERROR","message":"safe","component":"UNKNOWN","workflow_step":None,"attempt":1,"retryable":False,"timestamp":"2026-07-28T09:00:00Z","correlation_id":"018f0000-0000-7000-8000-000000000004","raw_provider_body":"secret"}

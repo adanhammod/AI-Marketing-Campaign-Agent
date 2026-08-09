@@ -6,7 +6,7 @@ import pytest
 from boto3.dynamodb.types import TypeSerializer
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignConstraints, CampaignVersion, RetryMetadata
-from campaign_contracts.dynamodb import serialize_meta, serialize_version
+from campaign_contracts.dynamodb import pk, serialize_meta, serialize_version, version_sk
 from campaign_contracts.enums import CampaignStatus, SQSOperation, StepStatus, WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.steps import WorkflowStepRecord
@@ -230,3 +230,41 @@ async def test_save_version_raises_lease_lost_for_stale_lock_version(database):
 
     with pytest.raises(LeaseLost):
         await repository.save_version(loaded, stale_lease)
+
+
+@pytest.mark.asyncio
+async def test_already_running_worker_cannot_overwrite_a_concurrent_api_cancellation(database):
+    """D: an already-running worker (holding a lease acquired before an external
+    cancellation) loses its stale lease and cannot overwrite CANCELLED. Simulates the
+    campaign_api DynamoDBCampaignRepository.cancel() write directly against the same
+    VERSION item -- worker and API share the same lock_version counter on that item."""
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    in_progress = loaded.model_copy(update={"status": CampaignStatus.GENERATING_STRATEGY})
+
+    # Simulate the API's cancel() committing while the worker is mid-node: it bumps
+    # lock_version (ADD, exactly like campaign_api's cancel()/replace_current()) and
+    # sets status=CANCELLED, independent of the worker's lease.
+    client.update_item(
+        TableName=TABLE,
+        Key=marshal({"PK": pk(message.campaign_id), "SK": version_sk(message.campaign_version)}),
+        UpdateExpression="SET #status=:status, cancellation_reason=:reason ADD lock_version :one",
+        ExpressionAttributeNames={"#status": "status"},
+        ExpressionAttributeValues={
+            ":status": SERIALIZER.serialize("CANCELLED"),
+            ":reason": SERIALIZER.serialize("User stopped generation"),
+            ":one": SERIALIZER.serialize(1),
+        },
+    )
+
+    # The worker's in-flight node finishes and tries to persist its (now stale) result.
+    with pytest.raises(LeaseLost):
+        await repository.save_version(in_progress, lease)
+
+    # The API's cancellation is untouched -- the worker's overwrite attempt failed.
+    reloaded = await repository.load_version(message)
+    assert reloaded is not None
+    assert reloaded.status == CampaignStatus.CANCELLED

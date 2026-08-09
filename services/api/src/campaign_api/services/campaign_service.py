@@ -9,6 +9,8 @@ from campaign_contracts.api import (
     CampaignDetailResponse,
     CampaignListResponse,
     CampaignSummary,
+    CancellationRequest,
+    CancellationResponse,
 )
 from campaign_contracts.campaign import (
     ApprovalRecord,
@@ -20,6 +22,7 @@ from campaign_contracts.campaign import (
 )
 from campaign_contracts.enums import CampaignStatus, SQSOperation
 from campaign_contracts.sqs import SQSJobMessage
+from campaign_contracts.validation import validate_transition
 
 from campaign_api.exceptions import (
     CampaignNotFound,
@@ -31,6 +34,16 @@ from campaign_api.exceptions import (
 )
 from campaign_api.queue.job_queue import JobQueue
 from campaign_api.repositories.campaign_repository import CampaignRepository
+
+_CANCELLATION_PENDING_STATUSES = frozenset(
+    {
+        CampaignStatus.GENERATING_STRATEGY,
+        CampaignStatus.GENERATING_COPY,
+        CampaignStatus.GENERATING_STORYBOARD,
+        CampaignStatus.GENERATING_IMAGES,
+        CampaignStatus.RENDERING_VIDEO,
+    }
+)
 
 
 class CampaignService:
@@ -226,6 +239,58 @@ class CampaignService:
             job_id=current.job_id,
         )
 
+    async def cancel(
+        self, campaign_id: UUID, campaign_version: int, request: CancellationRequest
+    ) -> CancellationResponse:
+        record = await self.repository.get(campaign_id)
+        if record is None:
+            raise CampaignNotFound("campaign not found")
+        aggregate, current = record
+        if current.campaign_version != campaign_version:
+            raise InvalidStateTransition("cancellation must target the current campaign version")
+
+        if current.status == CampaignStatus.CANCELLED:
+            if current.cancellation_reason != request.reason:
+                raise DuplicateJobConflict("cancellation already recorded with a different reason")
+            return CancellationResponse(
+                campaign_id=current.campaign_id,
+                campaign_version=current.campaign_version,
+                status=CampaignStatus.CANCELLED,
+                cancellation_pending=False,
+            )
+
+        try:
+            validate_transition(current.status, CampaignStatus.CANCELLED)  # type: ignore[no-untyped-call]
+        except ValueError as exc:
+            raise InvalidStateTransition(str(exc)) from None
+
+        pending = current.status in _CANCELLATION_PENDING_STATUSES
+        now = datetime.now(UTC)
+        updated_version = current.model_copy(
+            update={
+                "status": CampaignStatus.CANCELLED,
+                "cancellation_reason": request.reason,
+                "cancelled_at": now,
+                "updated_at": now,
+                "lock_version": current.lock_version + 1,
+            }
+        )
+        updated_aggregate = aggregate.model_copy(
+            update={
+                "current_status": CampaignStatus.CANCELLED,
+                "updated_at": now,
+                "lock_version": aggregate.lock_version + 1,
+            }
+        )
+        await self.repository.cancel(updated_aggregate, updated_version)
+
+        return CancellationResponse(
+            campaign_id=updated_version.campaign_id,
+            campaign_version=updated_version.campaign_version,
+            status=CampaignStatus.CANCELLED,
+            cancellation_pending=pending,
+        )
+
     @staticmethod
     def detail(a: CampaignAggregateMetadata, v: CampaignVersion) -> CampaignDetailResponse:
         return CampaignDetailResponse(
@@ -244,6 +309,8 @@ class CampaignService:
             completed_steps=v.completed_steps,
             retry_eligible=v.status == CampaignStatus.FAILED and v.retry.retryable,
             error=v.error,
+            cancellation_reason=v.cancellation_reason,
+            cancelled_at=v.cancelled_at,
             created_at=v.created_at,
             updated_at=v.updated_at,
             title=a.title,
