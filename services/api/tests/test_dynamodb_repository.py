@@ -446,6 +446,136 @@ async def test_retry_conflicts_on_concurrent_double_retry(repository):
         await repository.retry(queued_aggregate, queued_version)
 
 
+def _revision_records():
+    aggregate, version, _ = ready_for_review_records()
+    now = datetime.now(UTC)
+    regenerate_job_id = uuid5(version.campaign_id, "REGENERATE:2")
+    frozen_parent = version.model_copy(
+        update={"status": CampaignStatus.REVISION_REQUESTED, "updated_at": now, "lock_version": 1}
+    )
+    child_version = version.model_copy(
+        update={
+            "campaign_version": 2,
+            "parent_version": 1,
+            "job_id": regenerate_job_id,
+            "status": CampaignStatus.QUEUED,
+            "current_step": WorkflowStep.COPY,
+            "progress_percent": 20,
+            "review_package": None,
+            "created_at": now,
+            "updated_at": now,
+            "lock_version": 0,
+        }
+    )
+    updated_aggregate = aggregate.model_copy(
+        update={"current_version": 2, "current_status": CampaignStatus.QUEUED, "updated_at": now, "lock_version": 1}
+    )
+    return aggregate, version, updated_aggregate, frozen_parent, child_version
+
+
+@pytest.mark.asyncio
+async def test_revise_persists_parent_freeze_child_creation_and_meta_atomically(repository, dynamodb):
+    aggregate, version, updated_aggregate, frozen_parent, child_version = _revision_records()
+    await repository.create_initial(aggregate, version)
+
+    await repository.revise(updated_aggregate, frozen_parent, child_version)
+
+    parent_raw = dynamodb.get_item(
+        TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "VERSION#1"}}
+    )["Item"]
+    assert parent_raw["status"]["S"] == "REVISION_REQUESTED"
+
+    child_raw = dynamodb.get_item(
+        TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "VERSION#2"}}
+    )["Item"]
+    assert child_raw["status"]["S"] == "QUEUED"
+    assert child_raw["parent_version"]["N"] == "1"
+
+    meta_raw = dynamodb.get_item(
+        TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "META"}}
+    )["Item"]
+    assert meta_raw["current_version"]["N"] == "2"
+    assert meta_raw["current_status"]["S"] == "QUEUED"
+
+    found = await repository.get(aggregate.campaign_id)
+    assert found is not None
+    assert found[1].campaign_version == 2
+    assert found[1].status == CampaignStatus.QUEUED
+    assert found[1].parent_version == 1
+
+
+@pytest.mark.asyncio
+async def test_revise_conflicts_on_concurrent_double_revision(repository):
+    aggregate, version, updated_aggregate, frozen_parent, child_version = _revision_records()
+    await repository.create_initial(aggregate, version)
+    await repository.revise(updated_aggregate, frozen_parent, child_version)
+
+    with pytest.raises(InvalidStateTransition):
+        await repository.revise(updated_aggregate, frozen_parent, child_version)
+
+
+@pytest.mark.asyncio
+async def test_revise_vs_approve_race_lock_conflict(repository):
+    """Proves the revision-vs-approve race: if approve() commits first (advancing
+    lock_version and status to APPROVED), a stale revise() attempt still expecting the
+    pre-approval lock_version is rejected rather than silently corrupting state."""
+    aggregate, version, checksum = ready_for_review_records()
+    await repository.create_initial(aggregate, version)
+    now = datetime.now(UTC)
+    resume_job_id = uuid5(version.campaign_id, "RESUME:1")
+    approval = ApprovalRecord(
+        approval_id=uuid4(),
+        campaign_id=version.campaign_id,
+        campaign_version=1,
+        approved_at=now,
+        manifest_checksum=checksum,
+        note=None,
+        created_at=now,
+    )
+    approved_version = version.model_copy(
+        update={
+            "status": CampaignStatus.APPROVED,
+            "job_id": resume_job_id,
+            "approval": approval,
+            "progress_percent": 98,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    approved_aggregate = aggregate.model_copy(
+        update={"current_status": CampaignStatus.APPROVED, "current_progress": 98, "updated_at": now, "lock_version": 1}
+    )
+    await repository.approve(approved_aggregate, approved_version, approval)
+
+    # The API had read the campaign before the approval committed, so its revise
+    # attempt still expects lock_version 0 -> 1, which is now stale (actual is 1 -> 2).
+    regenerate_job_id = uuid5(version.campaign_id, "REGENERATE:2")
+    stale_frozen_parent = version.model_copy(
+        update={"status": CampaignStatus.REVISION_REQUESTED, "updated_at": now, "lock_version": 1}
+    )
+    stale_child = version.model_copy(
+        update={
+            "campaign_version": 2,
+            "parent_version": 1,
+            "job_id": regenerate_job_id,
+            "status": CampaignStatus.QUEUED,
+            "review_package": None,
+            "updated_at": now,
+            "lock_version": 0,
+        }
+    )
+    stale_aggregate = aggregate.model_copy(
+        update={"current_version": 2, "current_status": CampaignStatus.QUEUED, "updated_at": now, "lock_version": 1}
+    )
+
+    with pytest.raises(InvalidStateTransition):
+        await repository.revise(stale_aggregate, stale_frozen_parent, stale_child)
+
+    # The approval is untouched -- revise's stale write did not corrupt state.
+    found = await repository.get(aggregate.campaign_id)
+    assert found is not None and found[1].status == CampaignStatus.APPROVED
+
+
 @pytest.mark.asyncio
 async def test_guarded_rollback(repository):
     aggregate, version = records()

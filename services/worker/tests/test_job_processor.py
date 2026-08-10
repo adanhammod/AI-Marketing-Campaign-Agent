@@ -3,13 +3,24 @@ from uuid import uuid4
 
 import pytest
 from campaign_contracts.api import CampaignCreationRequest
-from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata
-from campaign_contracts.enums import CampaignStatus, RevisionTarget, SQSOperation, WorkflowStep
+from campaign_contracts.artifacts import ImageArtifactReference
+from campaign_contracts.campaign import (
+    CampaignConstraints,
+    CampaignCopy,
+    CampaignVersion,
+    ChannelCopy,
+    RetryMetadata,
+    Storyboard,
+    StoryboardScene,
+    StrategyOutput,
+)
+from campaign_contracts.enums import CampaignStatus, RevisionTarget, SQSOperation, StepStatus, WorkflowStep
 from campaign_contracts.errors import SanitizedWorkflowError
 from campaign_contracts.sqs import SQSJobMessage
 
 from campaign_worker.config import Settings
 from campaign_worker.consumer.sqs_consumer import MessageOutcome, SQSConsumer
+from campaign_worker.errors import LeaseConflict
 from campaign_worker.providers.base import ImageProvider, VideoProvider
 from campaign_worker.providers.mock_image_provider import MockImageProvider
 from campaign_worker.providers.mock_video_provider import MockVideoProvider
@@ -22,6 +33,61 @@ from campaign_worker.providers.models import (
 )
 from campaign_worker.repositories.workflow_repository import LeaseContext, WorkflowRepository
 from campaign_worker.services.job_processor import GraphJobProcessor
+
+
+def _strategy_output():
+    return StrategyOutput(
+        audience="Professionals",
+        positioning="Premium",
+        objective="Drive signups",
+        key_message="Try it now",
+        channel_rationale={"instagram": "high engagement"},
+    )
+
+
+def _campaign_copy():
+    return CampaignCopy(
+        headline="Cold brew, delivered",
+        caption="Fresh every week",
+        call_to_action="Subscribe today",
+        hashtags=["#coldbrew"],
+        channel_variants=[
+            ChannelCopy(
+                channel="instagram",
+                headline="Cold brew",
+                caption="Fresh",
+                call_to_action="Subscribe",
+                hashtags=["#coldbrew"],
+            )
+        ],
+    )
+
+
+def _storyboard_output():
+    scenes = [
+        StoryboardScene(
+            scene_number=n, purpose="p", duration_seconds=5, narration="n", visual_prompt="v", transition="cut"
+        )
+        for n in (1, 2, 3)
+    ]
+    return Storyboard(scenes=scenes, total_duration_seconds=15)
+
+
+def _image_artifacts(campaign_id, campaign_version):
+    now = datetime.now(UTC)
+    return [
+        ImageArtifactReference(
+            artifact_id=uuid4(),
+            campaign_id=campaign_id,
+            campaign_version=campaign_version,
+            workflow_step=WorkflowStep.IMAGES,
+            mime_type="image/png",
+            size_bytes=1024,
+            checksum_sha256="a" * 64,
+            created_at=now,
+        )
+        for _ in range(3)
+    ]
 
 
 def _brief(**overrides):
@@ -119,6 +185,31 @@ class _RecordingRepository(WorkflowRepository):
 
     async def available(self):
         raise NotImplementedError
+
+
+class _TrackingRepository(_RecordingRepository):
+    """Records which steps ever reach a RUNNING marker -- with_step_tracking only
+    writes RUNNING immediately before invoking the real node/provider, so a step
+    that's correctly skipped via a REUSED record never appears here."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.running_steps: list[WorkflowStep] = []
+
+    async def save_step(self, record):
+        if record.status == StepStatus.RUNNING:
+            self.running_steps.append(record.step)
+        await super().save_step(record)
+
+
+class _SeedingFailsRepository(_RecordingRepository):
+    """Fails only the REUSED-seeding writes, simulating a persistence failure that
+    must stop processing before any provider/graph work starts."""
+
+    async def save_step(self, record):
+        if record.status == StepStatus.REUSED:
+            raise RuntimeError("simulated seeding failure")
+        await super().save_step(record)
 
 
 class _AlwaysFailsImageProvider(ImageProvider):
@@ -254,8 +345,8 @@ async def test_resume_runs_only_prepare_final_package():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_is_rejected_cleanly_through_handle_failure():
-    repository, processor = _processor()
+async def test_regenerate_strategy_seeds_nothing_and_runs_full_pipeline():
+    repository, processor = _processor(repository=_TrackingRepository())
     version = _version()
     message = _message(
         SQSOperation.REGENERATE,
@@ -268,9 +359,185 @@ async def test_regenerate_is_rejected_cleanly_through_handle_failure():
     result = await processor.process(message, version, _lease())
 
     assert result.completed is True
+    # nothing precedes STRATEGY, so nothing is seeded REUSED -- every recorded step ran for real
+    assert all(record.status == StepStatus.SUCCEEDED for record in repository.steps.values())
+    assert WorkflowStep.STRATEGY in repository.running_steps
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.strategy is not None
+    assert final.campaign_copy is not None
+    assert final.storyboard is not None
+    assert len(final.image_artifacts) == 3
+    assert final.video_artifact is not None
+
+
+@pytest.mark.asyncio
+async def test_regenerate_copy_seeds_strategy_as_reused_and_skips_its_provider():
+    repository, processor = _processor(repository=_TrackingRepository())
+    version = _version(strategy=_strategy_output())
+    message = _message(
+        SQSOperation.REGENERATE,
+        version.campaign_id,
+        version.job_id,
+        requested_step=WorkflowStep.COPY,
+        revision_scope=RevisionTarget.COPY,
+    )
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    seeded = repository.steps[(version.campaign_id, version.campaign_version, WorkflowStep.STRATEGY)]
+    assert seeded.status == StepStatus.REUSED
+    assert WorkflowStep.STRATEGY not in repository.running_steps
+    assert WorkflowStep.COPY in repository.running_steps
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.strategy == version.strategy  # preserved, not regenerated
+    assert final.campaign_copy is not None
+
+
+@pytest.mark.asyncio
+async def test_regenerate_storyboard_seeds_strategy_and_copy_as_reused():
+    repository, processor = _processor(repository=_TrackingRepository())
+    version = _version(strategy=_strategy_output(), copy=_campaign_copy())
+    message = _message(
+        SQSOperation.REGENERATE,
+        version.campaign_id,
+        version.job_id,
+        requested_step=WorkflowStep.STORYBOARD,
+        revision_scope=RevisionTarget.STORYBOARD,
+    )
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    for step in (WorkflowStep.STRATEGY, WorkflowStep.COPY):
+        assert repository.steps[(version.campaign_id, version.campaign_version, step)].status == StepStatus.REUSED
+        assert step not in repository.running_steps
+    assert WorkflowStep.STORYBOARD in repository.running_steps
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.strategy == version.strategy
+    assert final.campaign_copy == version.campaign_copy
+
+
+@pytest.mark.asyncio
+async def test_regenerate_video_seeds_strategy_copy_storyboard_and_images_as_reused():
+    repository, processor = _processor(repository=_TrackingRepository())
+    version = _version(
+        strategy=_strategy_output(),
+        copy=_campaign_copy(),
+        storyboard=_storyboard_output(),
+        image_artifacts=_image_artifacts(uuid4(), 1),
+    )
+    message = _message(
+        SQSOperation.REGENERATE,
+        version.campaign_id,
+        version.job_id,
+        requested_step=WorkflowStep.VIDEO,
+        revision_scope=RevisionTarget.VIDEO,
+    )
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    for step in (WorkflowStep.STRATEGY, WorkflowStep.COPY, WorkflowStep.STORYBOARD, WorkflowStep.IMAGES):
+        assert repository.steps[(version.campaign_id, version.campaign_version, step)].status == StepStatus.REUSED
+        assert step not in repository.running_steps
+    assert WorkflowStep.VIDEO in repository.running_steps
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.image_artifacts == version.image_artifacts  # preserved, not regenerated
+    assert final.video_artifact is not None
+
+
+@pytest.mark.asyncio
+async def test_regenerate_duplicate_delivery_reseeds_idempotently_without_double_provider_calls():
+    repository, processor = _processor(repository=_TrackingRepository())
+    version = _version(strategy=_strategy_output())
+    message = _message(
+        SQSOperation.REGENERATE,
+        version.campaign_id,
+        version.job_id,
+        requested_step=WorkflowStep.COPY,
+        revision_scope=RevisionTarget.COPY,
+    )
+
+    first = await processor.process(message, version, _lease())
+    second = await processor.process(message, version, _lease())
+
+    assert first.completed is True and second.completed is True
+    assert WorkflowStep.STRATEGY not in repository.running_steps  # never ran, across either attempt
+    assert (
+        repository.steps[(version.campaign_id, version.campaign_version, WorkflowStep.STRATEGY)].status
+        == StepStatus.REUSED
+    )
+
+
+@pytest.mark.asyncio
+async def test_regenerate_seeding_failure_propagates_without_running_the_graph():
+    repository, processor = _processor(repository=_SeedingFailsRepository())
+    version = _version(strategy=_strategy_output())
+    message = _message(
+        SQSOperation.REGENERATE,
+        version.campaign_id,
+        version.job_id,
+        requested_step=WorkflowStep.COPY,
+        revision_scope=RevisionTarget.COPY,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated seeding failure"):
+        await processor.process(message, version, _lease())
+
+    assert repository.save_calls == []  # graph/provider work never started
+
+
+@pytest.mark.asyncio
+async def test_regenerate_selected_images_fails_before_seeding_or_graph_work():
+    repository, processor = _processor(repository=_TrackingRepository())
+    version = _version(strategy=_strategy_output(), copy=_campaign_copy(), storyboard=_storyboard_output())
+    message = _message(
+        SQSOperation.REGENERATE,
+        version.campaign_id,
+        version.job_id,
+        requested_step=WorkflowStep.IMAGES,
+        revision_scope=RevisionTarget.SELECTED_IMAGES,
+    )
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    assert repository.steps == {}  # no seeding happened
+    assert repository.running_steps == []  # graph never ran
     final = repository.save_calls[-1]
     assert final.status == CampaignStatus.FAILED
-    assert "REGENERATE" in final.error.message
+    assert final.retry.retryable is False
+    assert "SELECTED_IMAGES" in final.error.message
+
+
+@pytest.mark.asyncio
+async def test_stale_job_id_message_after_revision_gets_lease_conflict():
+    """A message carrying the pre-revision job_id must never acquire a lease once the
+    version's job_id has moved on (e.g. via a revision creating a new child version) --
+    proves the existing job_id-matching invariant protects REGENERATE the same way it
+    already protects START/RESUME/RETRY."""
+
+    class _JobIdCheckingRepository(_FullFakeRepository):
+        async def acquire_lease(self, message, owner, now, expires_at):
+            if message.job_id != self.version.job_id:
+                raise LeaseConflict("job_id mismatch")
+            return await super().acquire_lease(message, owner, now, expires_at)
+
+    version = _version()
+    repository = _JobIdCheckingRepository(version)
+    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
+    consumer = SQSConsumer(_StubSQSClient(), repository, processor, _settings())
+    stale_message = _message(SQSOperation.START, version.campaign_id, uuid4(), idempotency_key="stale")
+
+    outcome = await consumer.process_raw(_raw(stale_message))
+
+    assert outcome == MessageOutcome.LEASE_CONFLICT
+    assert repository.saved_versions == []
 
 
 @pytest.mark.asyncio

@@ -30,13 +30,14 @@ def test_openapi_scope_and_contracts(app):
         "/api/v1/campaigns/{campaign_id}/versions/{version}/approve",
         "/api/v1/campaigns/{campaign_id}/versions/{version}/cancel",
         "/api/v1/campaigns/{campaign_id}/versions/{version}/retry",
+        "/api/v1/campaigns/{campaign_id}/versions/{version}/revisions",
         "/health/live",
         "/health/ready",
     } == paths
     create = schema["paths"]["/api/v1/campaigns"]["post"]
     assert "202" in create["responses"]
     assert create["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith("/CampaignCreationRequest")
-    forbidden = ("revision", "events", "artifacts")
+    forbidden = ("events", "artifacts")
     assert not any(any(word in path for word in forbidden) for path in paths)
     serialized = str(schema)
     assert "TypedLangGraphCampaignState" not in serialized and "ProcessingLease" not in serialized

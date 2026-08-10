@@ -24,6 +24,13 @@ class CampaignRepository(ABC):
     @abstractmethod
     async def retry(self, aggregate: CampaignAggregateMetadata, version: CampaignVersion) -> None: ...
     @abstractmethod
+    async def revise(
+        self,
+        aggregate: CampaignAggregateMetadata,
+        parent_version: CampaignVersion,
+        child_version: CampaignVersion,
+    ) -> None: ...
+    @abstractmethod
     async def rollback_initial(self, campaign_id: UUID) -> None: ...
     @abstractmethod
     async def available(self) -> bool: ...

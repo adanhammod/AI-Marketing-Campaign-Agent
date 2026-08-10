@@ -13,6 +13,8 @@ from campaign_contracts.api import (
     CancellationResponse,
     RetryRequest,
     RetryResponse,
+    RevisionRequest,
+    RevisionResponse,
 )
 from campaign_contracts.campaign import (
     ApprovalRecord,
@@ -20,9 +22,11 @@ from campaign_contracts.campaign import (
     CampaignConstraints,
     CampaignVersion,
     RetryMetadata,
+    RevisionFeedback,
+    earliest_regeneration_step,
     validate_approval_target,
 )
-from campaign_contracts.enums import CampaignStatus, SQSOperation
+from campaign_contracts.enums import CampaignStatus, SQSOperation, WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.validation import validate_transition
 
@@ -46,6 +50,27 @@ _CANCELLATION_PENDING_STATUSES = frozenset(
         CampaignStatus.RENDERING_VIDEO,
     }
 )
+
+# Pipeline order used only to decide which content fields a revision reuses from its
+# parent: a field is reused iff its step comes strictly before earliest_affected_step.
+_STEP_ORDER = (
+    WorkflowStep.STRATEGY,
+    WorkflowStep.COPY,
+    WorkflowStep.STORYBOARD,
+    WorkflowStep.IMAGES,
+    WorkflowStep.VIDEO,
+)
+
+# Progress floor a freshly-created revision child starts at. Only COPY's floor (20) is
+# confirmed by the shared revision-version-2.json fixture; the rest are a reasonable,
+# self-consistent interpolation, not independently contract-pinned.
+_REVISION_PROGRESS_FLOOR: dict[WorkflowStep, int] = {
+    WorkflowStep.STRATEGY: 2,
+    WorkflowStep.COPY: 20,
+    WorkflowStep.STORYBOARD: 40,
+    WorkflowStep.IMAGES: 60,
+    WorkflowStep.VIDEO: 80,
+}
 
 
 class CampaignService:
@@ -368,6 +393,136 @@ class CampaignService:
             status=CampaignStatus.QUEUED,
             resume_step=resume_step,
             attempt=current.retry.attempt,
+        )
+
+    async def revise(
+        self, campaign_id: UUID, campaign_version: int, request: RevisionRequest, correlation_id: UUID
+    ) -> RevisionResponse:
+        record = await self.repository.get(campaign_id)
+        if record is None:
+            raise CampaignNotFound("campaign not found")
+        aggregate, current = record
+
+        earliest_affected_step = earliest_regeneration_step(request.scope)
+        expected_feedback = RevisionFeedback(
+            parent_version=campaign_version,
+            reason=request.reason,
+            scope=request.scope,
+            affected_artifact_ids=request.affected_artifact_ids,
+            earliest_affected_step=earliest_affected_step,
+        )
+
+        is_replay_target = (
+            current.campaign_version == campaign_version + 1 and current.parent_version == campaign_version
+        )
+        if is_replay_target and current.revision is not None:
+            if current.revision != expected_feedback:
+                raise DuplicateJobConflict("revision already recorded with different feedback")
+            message = self._build_regenerate_message(current, correlation_id)
+            result = await self.queue.submit(message)
+            if not result.accepted or result.job_id != message.job_id:
+                raise QueueSubmissionFailure("queue submission failed")
+            return RevisionResponse(
+                campaign_id=current.campaign_id,
+                parent_version=campaign_version,
+                campaign_version=current.campaign_version,
+                job_id=current.job_id,
+                status=CampaignStatus.QUEUED,
+                earliest_affected_step=earliest_affected_step,
+            )
+
+        if current.campaign_version != campaign_version:
+            raise InvalidStateTransition("revision must target the current campaign version")
+        if current.status != CampaignStatus.READY_FOR_REVIEW:
+            raise InvalidStateTransition("campaign is not in a revisable state")
+
+        now = datetime.now(UTC)
+        new_version_number = campaign_version + 1
+        new_job_id = uuid5(current.campaign_id, f"REGENERATE:{new_version_number}")
+
+        target_index = _STEP_ORDER.index(earliest_affected_step)
+        reused_steps = _STEP_ORDER[:target_index]
+        reuse_strategy = WorkflowStep.STRATEGY in reused_steps
+        reuse_copy = WorkflowStep.COPY in reused_steps
+        reuse_storyboard = WorkflowStep.STORYBOARD in reused_steps
+        reuse_images = WorkflowStep.IMAGES in reused_steps
+
+        child_version = CampaignVersion(
+            schema_version=1,
+            campaign_id=current.campaign_id,
+            campaign_version=new_version_number,
+            parent_version=campaign_version,
+            job_id=new_job_id,
+            status=CampaignStatus.QUEUED,
+            current_step=earliest_affected_step,
+            progress_percent=_REVISION_PROGRESS_FLOOR[earliest_affected_step],
+            brief=current.brief,
+            constraints=current.constraints,
+            strategy=current.strategy if reuse_strategy else None,
+            copy=current.campaign_copy if reuse_copy else None,
+            storyboard=current.storyboard if reuse_storyboard else None,
+            image_prompts=list(current.image_prompts) if reuse_images else [],
+            image_artifacts=list(current.image_artifacts) if reuse_images else [],
+            video_artifact=None,
+            review_package=None,
+            revision=expected_feedback,
+            approval=None,
+            completed_steps=list(reused_steps),
+            retry=RetryMetadata(),
+            error=None,
+            created_at=now,
+            updated_at=now,
+        )
+        frozen_parent = current.model_copy(
+            update={
+                "status": CampaignStatus.REVISION_REQUESTED,
+                "updated_at": now,
+                "lock_version": current.lock_version + 1,
+            }
+        )
+        updated_aggregate = aggregate.model_copy(
+            update={
+                "current_version": new_version_number,
+                "current_status": CampaignStatus.QUEUED,
+                "current_progress": child_version.progress_percent,
+                "updated_at": now,
+                "lock_version": aggregate.lock_version + 1,
+            }
+        )
+        await self.repository.revise(updated_aggregate, frozen_parent, child_version)
+
+        message = self._build_regenerate_message(child_version, correlation_id)
+        result = await self.queue.submit(message)
+        if not result.accepted or result.job_id != message.job_id:
+            raise QueueSubmissionFailure("queue submission failed")
+
+        return RevisionResponse(
+            campaign_id=child_version.campaign_id,
+            parent_version=campaign_version,
+            campaign_version=new_version_number,
+            job_id=new_job_id,
+            status=CampaignStatus.QUEUED,
+            earliest_affected_step=earliest_affected_step,
+        )
+
+    @staticmethod
+    def _build_regenerate_message(version: CampaignVersion, correlation_id: UUID) -> SQSJobMessage:
+        revision = version.revision
+        if revision is None:
+            raise InvalidStateTransition("revision metadata is missing for regeneration")
+        return SQSJobMessage(
+            schema_version=1,
+            job_id=version.job_id,
+            campaign_id=version.campaign_id,
+            campaign_version=version.campaign_version,
+            operation=SQSOperation.REGENERATE,
+            requested_step=revision.earliest_affected_step,
+            revision_scope=revision.scope,
+            idempotency_key=str(version.job_id),
+            correlation_id=correlation_id,
+            requested_at=version.updated_at,
+            attempt=0,
+            trace_id=correlation_id.hex,
         )
 
     @staticmethod
