@@ -7,6 +7,7 @@ from campaign_contracts.api import (
     CampaignCreationAcceptedResponse,
     CampaignCreationRequest,
     CampaignDetailResponse,
+    CampaignEventsResponse,
     CampaignListResponse,
     CancellationRequest,
     CancellationResponse,
@@ -66,6 +67,24 @@ async def get_campaign(
     return await service.get(campaign_id)
 
 
+@router.get(
+    "/{campaign_id}/events",
+    response_model=CampaignEventsResponse,
+    responses={
+        400: {"model": StandardValidationError},
+        404: {"model": NotFoundError},
+        422: {"model": StandardValidationError},
+    },
+)
+async def get_campaign_events(
+    campaign_id: UUID,
+    service: Annotated[CampaignService, Depends(get_service)],
+    cursor: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignEventsResponse:
+    return await service.events(campaign_id, cursor, limit)
+
+
 @router.post(
     "/{campaign_id}/versions/{version}/approve",
     response_model=ApprovalResponse,
@@ -110,7 +129,7 @@ async def cancel_campaign(
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
 ) -> CancellationResponse:
     del idempotency_key  # required by the mutation contract; cancellation identity is the durable record itself
-    result = await service.cancel(campaign_id, version, body)
+    result = await service.cancel(campaign_id, version, body, correlation_id())
     if result.cancellation_pending:
         response.status_code = status.HTTP_202_ACCEPTED
     return result

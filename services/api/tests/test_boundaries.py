@@ -49,9 +49,9 @@ def records():
 async def test_repository_duplicate_safe_copy_and_cleanup():
     repo = InMemoryCampaignRepository()
     a, v = records()
-    await repo.create_initial(a, v)
+    await repo.create_initial(a, v, [])
     with pytest.raises(DuplicateCampaign):
-        await repo.create_initial(a, v)
+        await repo.create_initial(a, v, [])
     fetched = await repo.get(a.campaign_id)
     assert fetched is not None
     fetched[0].title = "mutated"

@@ -16,6 +16,7 @@ def test_build_schema_includes_the_live_routes():
         "/api/v1/campaigns/{campaign_id}/versions/{version}/cancel",
         "/api/v1/campaigns/{campaign_id}/versions/{version}/retry",
         "/api/v1/campaigns/{campaign_id}/versions/{version}/revisions",
+        "/api/v1/campaigns/{campaign_id}/events",
         "/health/live",
         "/health/ready",
     }

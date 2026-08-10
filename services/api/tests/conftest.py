@@ -12,7 +12,8 @@ from campaign_contracts.campaign import (
     RetryMetadata,
     ReviewPackage,
 )
-from campaign_contracts.enums import CampaignStatus
+from campaign_contracts.enums import Actor, CampaignEventType, CampaignStatus
+from campaign_contracts.events import CampaignEvent
 from fastapi.testclient import TestClient
 
 from campaign_api.config import Settings
@@ -102,7 +103,7 @@ def ready_for_review_campaign(repository, approval_checksum):
             created_at=now,
             updated_at=now,
         )
-        await repository.create_initial(aggregate, version)
+        await repository.create_initial(aggregate, version, [])
         return campaign_id, job_id
 
     return _create
@@ -112,9 +113,13 @@ def ready_for_review_campaign(repository, approval_checksum):
 def campaign_at_status(repository):
     """Returns an async factory that persists a campaign at an arbitrary status and
     returns (campaign_id, job_id). Used by cancellation tests, which need coverage
-    across every source lifecycle status, not just READY_FOR_REVIEW."""
+    across every source lifecycle status, not just READY_FOR_REVIEW.
 
-    async def _create(status: CampaignStatus, **overrides: object) -> tuple:
+    Pass event_count=N to also seed N generic (STATUS_CHANGED) events with sequences
+    1..N, for tests that only need event-pagination mechanics, not real emission
+    semantics -- real emission is covered by test_events.py's mutation-flow tests."""
+
+    async def _create(status: CampaignStatus, event_count: int = 0, **overrides: object) -> tuple:
         campaign_id = uuid4()
         job_id = uuid4()
         now = datetime.now(UTC)
@@ -137,6 +142,24 @@ def campaign_at_status(repository):
         }
         version_fields.update(overrides)
         version = CampaignVersion(**version_fields)
+        events = [
+            CampaignEvent(
+                event_id=uuid4(),
+                campaign_id=campaign_id,
+                campaign_version=1,
+                event_sequence=sequence,
+                event_type=CampaignEventType.STATUS_CHANGED,
+                status=status,
+                step=None,
+                progress_percent=version.progress_percent,
+                occurred_at=now,
+                actor=Actor.SYSTEM,
+                correlation_id=uuid4(),
+                job_id=job_id,
+                details={},
+            )
+            for sequence in range(1, event_count + 1)
+        ]
         aggregate = CampaignAggregateMetadata(
             campaign_id=campaign_id,
             current_version=1,
@@ -144,11 +167,11 @@ def campaign_at_status(repository):
             created_at=now,
             updated_at=now,
             lock_version=0,
-            event_sequence=0,
+            event_sequence=event_count,
             current_status=status,
             current_progress=version.progress_percent,
         )
-        await repository.create_initial(aggregate, version)
+        await repository.create_initial(aggregate, version, events)
         return campaign_id, job_id
 
     return _create

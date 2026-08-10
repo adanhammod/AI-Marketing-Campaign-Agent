@@ -12,7 +12,8 @@ from campaign_contracts.campaign import (
     RetryMetadata,
     ReviewPackage,
 )
-from campaign_contracts.enums import CampaignStatus, WorkflowStep
+from campaign_contracts.enums import Actor, CampaignEventType, CampaignStatus, WorkflowStep
+from campaign_contracts.events import CampaignEvent
 from fastapi.testclient import TestClient
 from moto import mock_aws
 
@@ -118,7 +119,7 @@ def repository(dynamodb):
 @pytest.mark.asyncio
 async def test_atomic_create_get_list_and_duplicate(repository, dynamodb):
     aggregate, version = records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     assert await repository.exists(aggregate.campaign_id)
     found = await repository.get(aggregate.campaign_id)
     assert found is not None
@@ -127,7 +128,7 @@ async def test_atomic_create_get_list_and_duplicate(repository, dynamodb):
     listed = await repository.list(offset=0, limit=10)
     assert [x[0].campaign_id for x in listed] == [aggregate.campaign_id]
     with pytest.raises(DuplicateCampaign):
-        await repository.create_initial(aggregate, version)
+        await repository.create_initial(aggregate, version, [])
     scan = dynamodb.scan(TableName=TABLE)["Items"]
     assert len(scan) == 2
     assert all(not isinstance(value, float) for item in scan for value in item.values())
@@ -136,7 +137,7 @@ async def test_atomic_create_get_list_and_duplicate(repository, dynamodb):
 @pytest.mark.asyncio
 async def test_optimistic_replace_and_conflict(repository):
     aggregate, version = records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     queued_a = aggregate.model_copy(
         update={"current_status": CampaignStatus.QUEUED, "current_progress": 2, "updated_at": now, "lock_version": 1}
@@ -154,7 +155,7 @@ async def test_optimistic_replace_and_conflict(repository):
 @pytest.mark.asyncio
 async def test_approve_persists_new_job_id_and_approval_item(repository, dynamodb):
     aggregate, version, checksum = ready_for_review_records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     resume_job_id = uuid5(version.campaign_id, f"RESUME:{version.campaign_version}")
     approval = ApprovalRecord(
@@ -180,7 +181,7 @@ async def test_approve_persists_new_job_id_and_approval_item(repository, dynamod
         update={"current_status": CampaignStatus.APPROVED, "current_progress": 98, "updated_at": now, "lock_version": 1}
     )
 
-    await repository.approve(approved_aggregate, approved_version, approval)
+    await repository.approve(approved_aggregate, approved_version, approval, [])
 
     # the raw VERSION item's job_id attribute is exactly what the worker's lease
     # acquisition ConditionExpression compares against -- prove it directly, not just
@@ -205,7 +206,7 @@ async def test_approve_persists_new_job_id_and_approval_item(repository, dynamod
 @pytest.mark.asyncio
 async def test_approve_conflicts_on_concurrent_double_approval(repository):
     aggregate, version, checksum = ready_for_review_records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     resume_job_id = uuid5(version.campaign_id, f"RESUME:{version.campaign_version}")
     approval = ApprovalRecord(
@@ -230,16 +231,16 @@ async def test_approve_conflicts_on_concurrent_double_approval(repository):
     approved_aggregate = aggregate.model_copy(
         update={"current_status": CampaignStatus.APPROVED, "current_progress": 98, "updated_at": now, "lock_version": 1}
     )
-    await repository.approve(approved_aggregate, approved_version, approval)
+    await repository.approve(approved_aggregate, approved_version, approval, [])
 
     with pytest.raises(InvalidStateTransition):
-        await repository.approve(approved_aggregate, approved_version, approval)
+        await repository.approve(approved_aggregate, approved_version, approval, [])
 
 
 @pytest.mark.asyncio
 async def test_cancel_persists_reason_and_timestamp(repository, dynamodb):
     aggregate, version = records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     cancelled_version = version.model_copy(
         update={
@@ -254,7 +255,7 @@ async def test_cancel_persists_reason_and_timestamp(repository, dynamodb):
         update={"current_status": CampaignStatus.CANCELLED, "updated_at": now, "lock_version": 1}
     )
 
-    await repository.cancel(cancelled_aggregate, cancelled_version)
+    await repository.cancel(cancelled_aggregate, cancelled_version, [])
 
     raw = dynamodb.get_item(
         TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "VERSION#1"}}
@@ -275,7 +276,7 @@ async def test_cancel_persists_reason_and_timestamp(repository, dynamodb):
 @pytest.mark.asyncio
 async def test_cancel_conflicts_on_concurrent_double_cancel(repository):
     aggregate, version = records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     cancelled_version = version.model_copy(
         update={
@@ -289,10 +290,10 @@ async def test_cancel_conflicts_on_concurrent_double_cancel(repository):
     cancelled_aggregate = aggregate.model_copy(
         update={"current_status": CampaignStatus.CANCELLED, "updated_at": now, "lock_version": 1}
     )
-    await repository.cancel(cancelled_aggregate, cancelled_version)
+    await repository.cancel(cancelled_aggregate, cancelled_version, [])
 
     with pytest.raises(InvalidStateTransition):
-        await repository.cancel(cancelled_aggregate, cancelled_version)
+        await repository.cancel(cancelled_aggregate, cancelled_version, [])
 
 
 @pytest.mark.asyncio
@@ -301,7 +302,7 @@ async def test_cancel_vs_worker_transition_lock_conflict(repository):
     lock_version on the VERSION item between the API's read and its cancel() write,
     the cancel() write is rejected rather than silently succeeding against stale data."""
     aggregate, version = records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     # Simulate a worker's concurrent transition (e.g. QUEUED -> GENERATING_STRATEGY)
     # advancing lock_version to 1 on both items, same shape as replace_current.
@@ -328,7 +329,7 @@ async def test_cancel_vs_worker_transition_lock_conflict(repository):
         update={"current_status": CampaignStatus.CANCELLED, "updated_at": now, "lock_version": 1}
     )
     with pytest.raises(InvalidStateTransition):
-        await repository.cancel(stale_cancel_aggregate, stale_cancel_version)
+        await repository.cancel(stale_cancel_aggregate, stale_cancel_version, [])
 
     # The worker's transition is untouched -- no partial/corrupted write occurred.
     found = await repository.get(aggregate.campaign_id)
@@ -342,7 +343,7 @@ async def test_cancel_vs_approve_race_lock_conflict(repository):
     attempt that still expects the pre-approval lock_version is rejected rather than
     silently reviving/overwriting the approved campaign."""
     aggregate, version, checksum = ready_for_review_records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     resume_job_id = uuid5(version.campaign_id, f"RESUME:{version.campaign_version}")
     approval = ApprovalRecord(
@@ -367,7 +368,7 @@ async def test_cancel_vs_approve_race_lock_conflict(repository):
     approved_aggregate = aggregate.model_copy(
         update={"current_status": CampaignStatus.APPROVED, "current_progress": 98, "updated_at": now, "lock_version": 1}
     )
-    await repository.approve(approved_aggregate, approved_version, approval)
+    await repository.approve(approved_aggregate, approved_version, approval, [])
 
     # The API had read the campaign before the approval committed, so its cancel
     # attempt still expects lock_version 0 -> 1, which is now stale (actual is 1 -> 2).
@@ -384,7 +385,7 @@ async def test_cancel_vs_approve_race_lock_conflict(repository):
         update={"current_status": CampaignStatus.CANCELLED, "updated_at": now, "lock_version": 1}
     )
     with pytest.raises(InvalidStateTransition):
-        await repository.cancel(stale_cancel_aggregate, stale_cancel_version)
+        await repository.cancel(stale_cancel_aggregate, stale_cancel_version, [])
 
     # The approval is untouched -- cancel's stale write did not corrupt state.
     found = await repository.get(aggregate.campaign_id)
@@ -402,7 +403,7 @@ def _failed_records():
 @pytest.mark.asyncio
 async def test_retry_persists_status_and_job_id(repository, dynamodb):
     aggregate, version = _failed_records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     retry_job_id = uuid5(version.campaign_id, f"RETRY:{version.campaign_version}:{version.retry.attempt}")
     queued_version = version.model_copy(
@@ -412,7 +413,7 @@ async def test_retry_persists_status_and_job_id(repository, dynamodb):
         update={"current_status": CampaignStatus.QUEUED, "updated_at": now, "lock_version": 1}
     )
 
-    await repository.retry(queued_aggregate, queued_version)
+    await repository.retry(queued_aggregate, queued_version, [])
 
     raw = dynamodb.get_item(
         TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "VERSION#1"}}
@@ -431,7 +432,7 @@ async def test_retry_persists_status_and_job_id(repository, dynamodb):
 @pytest.mark.asyncio
 async def test_retry_conflicts_on_concurrent_double_retry(repository):
     aggregate, version = _failed_records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     retry_job_id = uuid5(version.campaign_id, f"RETRY:{version.campaign_version}:{version.retry.attempt}")
     queued_version = version.model_copy(
@@ -440,10 +441,10 @@ async def test_retry_conflicts_on_concurrent_double_retry(repository):
     queued_aggregate = aggregate.model_copy(
         update={"current_status": CampaignStatus.QUEUED, "updated_at": now, "lock_version": 1}
     )
-    await repository.retry(queued_aggregate, queued_version)
+    await repository.retry(queued_aggregate, queued_version, [])
 
     with pytest.raises(InvalidStateTransition):
-        await repository.retry(queued_aggregate, queued_version)
+        await repository.retry(queued_aggregate, queued_version, [])
 
 
 def _revision_records():
@@ -476,9 +477,9 @@ def _revision_records():
 @pytest.mark.asyncio
 async def test_revise_persists_parent_freeze_child_creation_and_meta_atomically(repository, dynamodb):
     aggregate, version, updated_aggregate, frozen_parent, child_version = _revision_records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
 
-    await repository.revise(updated_aggregate, frozen_parent, child_version)
+    await repository.revise(updated_aggregate, frozen_parent, child_version, [])
 
     parent_raw = dynamodb.get_item(
         TableName=TABLE, Key={"PK": {"S": f"CAMPAIGN#{version.campaign_id}"}, "SK": {"S": "VERSION#1"}}
@@ -507,11 +508,11 @@ async def test_revise_persists_parent_freeze_child_creation_and_meta_atomically(
 @pytest.mark.asyncio
 async def test_revise_conflicts_on_concurrent_double_revision(repository):
     aggregate, version, updated_aggregate, frozen_parent, child_version = _revision_records()
-    await repository.create_initial(aggregate, version)
-    await repository.revise(updated_aggregate, frozen_parent, child_version)
+    await repository.create_initial(aggregate, version, [])
+    await repository.revise(updated_aggregate, frozen_parent, child_version, [])
 
     with pytest.raises(InvalidStateTransition):
-        await repository.revise(updated_aggregate, frozen_parent, child_version)
+        await repository.revise(updated_aggregate, frozen_parent, child_version, [])
 
 
 @pytest.mark.asyncio
@@ -520,7 +521,7 @@ async def test_revise_vs_approve_race_lock_conflict(repository):
     lock_version and status to APPROVED), a stale revise() attempt still expecting the
     pre-approval lock_version is rejected rather than silently corrupting state."""
     aggregate, version, checksum = ready_for_review_records()
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     resume_job_id = uuid5(version.campaign_id, "RESUME:1")
     approval = ApprovalRecord(
@@ -545,7 +546,7 @@ async def test_revise_vs_approve_race_lock_conflict(repository):
     approved_aggregate = aggregate.model_copy(
         update={"current_status": CampaignStatus.APPROVED, "current_progress": 98, "updated_at": now, "lock_version": 1}
     )
-    await repository.approve(approved_aggregate, approved_version, approval)
+    await repository.approve(approved_aggregate, approved_version, approval, [])
 
     # The API had read the campaign before the approval committed, so its revise
     # attempt still expects lock_version 0 -> 1, which is now stale (actual is 1 -> 2).
@@ -569,7 +570,7 @@ async def test_revise_vs_approve_race_lock_conflict(repository):
     )
 
     with pytest.raises(InvalidStateTransition):
-        await repository.revise(stale_aggregate, stale_frozen_parent, stale_child)
+        await repository.revise(stale_aggregate, stale_frozen_parent, stale_child, [])
 
     # The approval is untouched -- revise's stale write did not corrupt state.
     found = await repository.get(aggregate.campaign_id)
@@ -577,12 +578,86 @@ async def test_revise_vs_approve_race_lock_conflict(repository):
 
 
 @pytest.mark.asyncio
+async def test_event_persistence_failure_fails_the_whole_mutation_transaction(repository, dynamodb):
+    """Proves the "transactionally increment event_sequence" requirement: if the event
+    Put in a mutation's transaction fails (here, simulated by a pre-existing item
+    occupying the exact EVENT# key the mutation would write), the ENTIRE transaction
+    is rejected -- including the META/VERSION updates -- not just the event write."""
+    aggregate, version, checksum = ready_for_review_records()
+    await repository.create_initial(aggregate, version, [])
+    now = datetime.now(UTC)
+    resume_job_id = uuid5(version.campaign_id, "RESUME:1")
+    colliding_event_id = uuid4()
+    # Occupy the exact EVENT# key the approve() call below will try to Put.
+    dynamodb.put_item(
+        TableName=TABLE,
+        Item={
+            "PK": {"S": f"CAMPAIGN#{version.campaign_id}"},
+            "SK": {"S": f"EVENT#{1:020d}#{colliding_event_id}"},
+            "entity_type": {"S": "CAMPAIGN_EVENT"},
+        },
+    )
+    approval = ApprovalRecord(
+        approval_id=uuid4(),
+        campaign_id=version.campaign_id,
+        campaign_version=1,
+        approved_at=now,
+        manifest_checksum=checksum,
+        note=None,
+        created_at=now,
+    )
+    approved_version = version.model_copy(
+        update={
+            "status": CampaignStatus.APPROVED,
+            "job_id": resume_job_id,
+            "approval": approval,
+            "progress_percent": 98,
+            "updated_at": now,
+            "lock_version": 1,
+        }
+    )
+    approved_aggregate = aggregate.model_copy(
+        update={
+            "current_status": CampaignStatus.APPROVED,
+            "current_progress": 98,
+            "updated_at": now,
+            "lock_version": 1,
+            "event_sequence": 1,
+        }
+    )
+    colliding_event = CampaignEvent(
+        event_id=colliding_event_id,
+        campaign_id=version.campaign_id,
+        campaign_version=1,
+        event_sequence=1,
+        event_type=CampaignEventType.APPROVED,
+        status=CampaignStatus.APPROVED,
+        step=None,
+        progress_percent=98,
+        occurred_at=now,
+        actor=Actor.FASTAPI,
+        correlation_id=uuid4(),
+        job_id=resume_job_id,
+        details={},
+    )
+
+    with pytest.raises(InvalidStateTransition):
+        await repository.approve(approved_aggregate, approved_version, approval, [colliding_event])
+
+    # The whole transaction rolled back -- META/VERSION were never touched either.
+    found = await repository.get(aggregate.campaign_id)
+    assert found is not None
+    assert found[1].status == CampaignStatus.READY_FOR_REVIEW
+    assert found[0].event_sequence == 0
+
+
+@pytest.mark.asyncio
 async def test_guarded_rollback(repository):
     aggregate, version = records()
-    await repository.create_initial(aggregate, version)
-    await repository.rollback_initial(aggregate.campaign_id)
+    await repository.create_initial(aggregate, version, [])
+    await repository.rollback_initial(aggregate.campaign_id, [])
     assert not await repository.exists(aggregate.campaign_id)
-    await repository.create_initial(aggregate, version)
+    await repository.create_initial(aggregate, version, [])
     now = datetime.now(UTC)
     await repository.replace_current(
         aggregate.model_copy(
@@ -598,7 +673,7 @@ async def test_guarded_rollback(repository):
         ),
     )
     with pytest.raises(InvalidStateTransition):
-        await repository.rollback_initial(aggregate.campaign_id)
+        await repository.rollback_initial(aggregate.campaign_id, [])
 
 
 @pytest.mark.asyncio

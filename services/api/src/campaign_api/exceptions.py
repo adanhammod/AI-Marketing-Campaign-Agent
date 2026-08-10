@@ -38,3 +38,8 @@ class QueueSubmissionAmbiguousFailure(QueueSubmissionFailure):
 class DuplicateJobConflict(CampaignAPIError):
     code = "IDEMPOTENCY_CONFLICT"
     status_code = 409
+
+
+class InvalidCursor(CampaignAPIError):
+    code = "VALIDATION_ERROR"
+    status_code = 400

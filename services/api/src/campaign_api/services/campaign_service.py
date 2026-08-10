@@ -7,6 +7,7 @@ from campaign_contracts.api import (
     CampaignCreationAcceptedResponse,
     CampaignCreationRequest,
     CampaignDetailResponse,
+    CampaignEventsResponse,
     CampaignListResponse,
     CampaignSummary,
     CancellationRequest,
@@ -26,14 +27,16 @@ from campaign_contracts.campaign import (
     earliest_regeneration_step,
     validate_approval_target,
 )
-from campaign_contracts.enums import CampaignStatus, SQSOperation, WorkflowStep
+from campaign_contracts.enums import Actor, CampaignEventType, CampaignStatus, SQSOperation, WorkflowStep
+from campaign_contracts.events import CampaignEvent
 from campaign_contracts.sqs import SQSJobMessage
-from campaign_contracts.validation import validate_transition
+from campaign_contracts.validation import is_terminal, validate_transition
 
 from campaign_api.exceptions import (
     CampaignNotFound,
     DuplicateCampaign,
     DuplicateJobConflict,
+    InvalidCursor,
     InvalidStateTransition,
     QueueSubmissionAmbiguousFailure,
     QueueSubmissionFailure,
@@ -92,7 +95,7 @@ class CampaignService:
             created_at=now,
             updated_at=now,
             lock_version=0,
-            event_sequence=0,
+            event_sequence=1,
             current_status=CampaignStatus.CREATED,
             current_progress=0,
         )
@@ -110,6 +113,21 @@ class CampaignService:
             created_at=now,
             updated_at=now,
         )
+        created_event = CampaignEvent(
+            event_id=uuid4(),
+            campaign_id=campaign_id,
+            campaign_version=1,
+            event_sequence=1,
+            event_type=CampaignEventType.CAMPAIGN_CREATED,
+            status=CampaignStatus.CREATED,
+            step=None,
+            progress_percent=0,
+            occurred_at=now,
+            actor=Actor.FASTAPI,
+            correlation_id=correlation_id,
+            job_id=job_id,
+            details={},
+        )
         message = SQSJobMessage(
             schema_version=1,
             job_id=job_id,
@@ -125,7 +143,7 @@ class CampaignService:
             trace_id=correlation_id.hex,
         )
         try:
-            await self.repository.create_initial(aggregate, version)
+            await self.repository.create_initial(aggregate, version, [created_event])
         except DuplicateCampaign:
             existing = await self.repository.get(campaign_id)
             if existing is None or existing[1].brief.model_dump(mode="json") != request.model_dump(mode="json"):
@@ -151,7 +169,7 @@ class CampaignService:
             # Preserve CREATED and the stable job_id: deleting could orphan an accepted message.
             raise
         except Exception:
-            await self.repository.rollback_initial(campaign_id)
+            await self.repository.rollback_initial(campaign_id, [created_event])
             raise
         queued_version = version.model_copy(
             update={
@@ -235,9 +253,25 @@ class CampaignService:
                     "current_progress": 98,
                     "updated_at": now,
                     "lock_version": aggregate.lock_version + 1,
+                    "event_sequence": aggregate.event_sequence + 1,
                 }
             )
-            await self.repository.approve(updated_aggregate, updated_version, approval)
+            approved_event = CampaignEvent(
+                event_id=uuid4(),
+                campaign_id=current.campaign_id,
+                campaign_version=current.campaign_version,
+                event_sequence=aggregate.event_sequence + 1,
+                event_type=CampaignEventType.APPROVED,
+                status=CampaignStatus.APPROVED,
+                step=None,
+                progress_percent=98,
+                occurred_at=now,
+                actor=Actor.FASTAPI,
+                correlation_id=correlation_id,
+                job_id=resume_job_id,
+                details={},
+            )
+            await self.repository.approve(updated_aggregate, updated_version, approval, [approved_event])
             current = updated_version
 
         message = SQSJobMessage(
@@ -267,7 +301,7 @@ class CampaignService:
         )
 
     async def cancel(
-        self, campaign_id: UUID, campaign_version: int, request: CancellationRequest
+        self, campaign_id: UUID, campaign_version: int, request: CancellationRequest, correlation_id: UUID
     ) -> CancellationResponse:
         record = await self.repository.get(campaign_id)
         if record is None:
@@ -302,14 +336,54 @@ class CampaignService:
                 "lock_version": current.lock_version + 1,
             }
         )
+        events = [
+            CampaignEvent(
+                event_id=uuid4(),
+                campaign_id=current.campaign_id,
+                campaign_version=current.campaign_version,
+                event_sequence=aggregate.event_sequence + 1,
+                event_type=CampaignEventType.CANCEL_REQUESTED,
+                status=CampaignStatus.CANCELLED,
+                step=current.current_step,
+                progress_percent=current.progress_percent,
+                occurred_at=now,
+                actor=Actor.FASTAPI,
+                correlation_id=correlation_id,
+                job_id=current.job_id,
+                details={},
+            )
+        ]
+        if not pending:
+            # "No provider call active": FastAPI durably sets CANCELLED itself in the
+            # same transaction (docs/contracts/campaign-lifecycle.md's cancellation
+            # section). When pending, only CANCEL_REQUESTED is recorded here -- the
+            # eventual CANCELLED event for that path is worker-owned (C5B).
+            events.append(
+                CampaignEvent(
+                    event_id=uuid4(),
+                    campaign_id=current.campaign_id,
+                    campaign_version=current.campaign_version,
+                    event_sequence=aggregate.event_sequence + 2,
+                    event_type=CampaignEventType.CANCELLED,
+                    status=CampaignStatus.CANCELLED,
+                    step=current.current_step,
+                    progress_percent=current.progress_percent,
+                    occurred_at=now,
+                    actor=Actor.FASTAPI,
+                    correlation_id=correlation_id,
+                    job_id=current.job_id,
+                    details={},
+                )
+            )
         updated_aggregate = aggregate.model_copy(
             update={
                 "current_status": CampaignStatus.CANCELLED,
                 "updated_at": now,
                 "lock_version": aggregate.lock_version + 1,
+                "event_sequence": aggregate.event_sequence + len(events),
             }
         )
-        await self.repository.cancel(updated_aggregate, updated_version)
+        await self.repository.cancel(updated_aggregate, updated_version, events)
 
         return CancellationResponse(
             campaign_id=updated_version.campaign_id,
@@ -353,9 +427,25 @@ class CampaignService:
                     "current_status": CampaignStatus.QUEUED,
                     "updated_at": now,
                     "lock_version": aggregate.lock_version + 1,
+                    "event_sequence": aggregate.event_sequence + 1,
                 }
             )
-            await self.repository.retry(updated_aggregate, updated_version)
+            retry_event = CampaignEvent(
+                event_id=uuid4(),
+                campaign_id=current.campaign_id,
+                campaign_version=current.campaign_version,
+                event_sequence=aggregate.event_sequence + 1,
+                event_type=CampaignEventType.RETRY_SCHEDULED,
+                status=CampaignStatus.QUEUED,
+                step=None,
+                progress_percent=current.progress_percent,
+                occurred_at=now,
+                actor=Actor.FASTAPI,
+                correlation_id=correlation_id,
+                job_id=retry_job_id,
+                details={},
+            )
+            await self.repository.retry(updated_aggregate, updated_version, [retry_event])
             current = updated_version
         elif current.status == CampaignStatus.QUEUED:
             expected_job_id = uuid5(current.campaign_id, f"RETRY:{current.campaign_version}:{current.retry.attempt}")
@@ -487,9 +577,25 @@ class CampaignService:
                 "current_progress": child_version.progress_percent,
                 "updated_at": now,
                 "lock_version": aggregate.lock_version + 1,
+                "event_sequence": aggregate.event_sequence + 1,
             }
         )
-        await self.repository.revise(updated_aggregate, frozen_parent, child_version)
+        revision_event = CampaignEvent(
+            event_id=uuid4(),
+            campaign_id=current.campaign_id,
+            campaign_version=campaign_version,  # describes the frozen parent, not the new child
+            event_sequence=aggregate.event_sequence + 1,
+            event_type=CampaignEventType.REVISION_REQUESTED,
+            status=CampaignStatus.REVISION_REQUESTED,
+            step=None,
+            progress_percent=current.progress_percent,
+            occurred_at=now,
+            actor=Actor.FASTAPI,
+            correlation_id=correlation_id,
+            job_id=current.job_id,
+            details={},
+        )
+        await self.repository.revise(updated_aggregate, frozen_parent, child_version, [revision_event])
 
         message = self._build_regenerate_message(child_version, correlation_id)
         result = await self.queue.submit(message)
@@ -579,3 +685,29 @@ class CampaignService:
             for a, v in records
         ]
         return CampaignListResponse(items=items, next_cursor=str(offset + limit) if has_more else None)
+
+    async def events(self, campaign_id: UUID, cursor: str | None, limit: int) -> CampaignEventsResponse:
+        record = await self.repository.get(campaign_id)
+        if record is None:
+            raise CampaignNotFound("campaign not found")
+        aggregate, current = record
+        after_sequence = 0
+        if cursor is not None:
+            try:
+                after_sequence = int(cursor)
+            except ValueError:
+                raise InvalidCursor("cursor is not a valid event sequence") from None
+            if after_sequence < 0:
+                raise InvalidCursor("cursor is not a valid event sequence")
+        fetched = await self.repository.list_events(campaign_id, after_sequence, limit + 1)
+        has_more = len(fetched) > limit
+        items = fetched[:limit]
+        next_cursor = str(items[-1].event_sequence) if has_more else None
+        return CampaignEventsResponse(
+            campaign_id=campaign_id,
+            campaign_version=current.campaign_version,
+            items=items,
+            next_cursor=next_cursor,
+            latest_sequence=aggregate.event_sequence,
+            terminal=is_terminal(current.status),  # type: ignore[no-untyped-call]
+        )
