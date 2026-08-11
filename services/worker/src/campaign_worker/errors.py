@@ -20,3 +20,12 @@ class LeaseLost(WorkerError):
 
 class ProcessingUncertain(WorkerError):
     pass
+
+
+class WorkflowOperationError(WorkerError):
+    """A safe, typed failure that can cross the graph error boundary."""
+
+    def __init__(self, code: str, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable

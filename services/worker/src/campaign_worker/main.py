@@ -3,22 +3,33 @@ import signal
 from typing import Any
 
 import boto3  # type: ignore[import-untyped]
+import httpx
 import uvicorn
 from botocore.config import Config  # type: ignore[import-untyped]
 
 from .config import Settings
 from .consumer.sqs_consumer import SQSConsumer
 from .health import build_health_app
+from .images.pipeline import StockImagePipeline
+from .images.processor import ImageProcessor
+from .images.query_generator import BedrockQueryGenerator
 from .logging import configure_logging
 from .providers.mock_image_provider import MockImageProvider
 from .providers.mock_video_provider import MockVideoProvider
 from .providers.mock_voice_provider import MockVoiceProvider
+from .providers.pexels_client import PexelsPhotoClient
 from .repositories.dynamodb_workflow_repository import DynamoDBWorkflowRepository
 from .services.job_processor import GraphJobProcessor
+from .storage.s3_artifact_store import S3ArtifactStore
 
 
 def build_consumer(
-    settings: Settings, sqs_client: Any | None = None, dynamodb_client: Any | None = None
+    settings: Settings,
+    sqs_client: Any | None = None,
+    dynamodb_client: Any | None = None,
+    bedrock_client: Any | None = None,
+    s3_client: Any | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> SQSConsumer:
     settings.validate()
     config = Config(connect_timeout=10, read_timeout=30, retries={"max_attempts": 0})
@@ -29,7 +40,24 @@ def build_consumer(
         "dynamodb", region_name=settings.aws_region, endpoint_url=settings.endpoint_url, config=config
     )
     repository = DynamoDBWorkflowRepository(dynamodb, settings.table_name or "")
-    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
+    if settings.artifact_bucket and settings.pexels_api_key and settings.bedrock_image_query_model_id:
+        settings.validate_image_pipeline()
+        bedrock = bedrock_client or boto3.client("bedrock-runtime", region_name=settings.aws_region, config=config)
+        s3 = s3_client or boto3.client(
+            "s3", region_name=settings.aws_region, endpoint_url=settings.endpoint_url, config=config
+        )
+        client = http_client or httpx.AsyncClient(
+            timeout=httpx.Timeout(settings.image_http_timeout_seconds), follow_redirects=True
+        )
+        image_pipeline = StockImagePipeline(
+            BedrockQueryGenerator(bedrock, settings.bedrock_image_query_model_id),
+            PexelsPhotoClient(settings.pexels_api_key, client, per_page=settings.pexels_candidate_count),
+            ImageProcessor(settings.image_max_download_bytes),
+            S3ArtifactStore(s3, settings.artifact_bucket),
+        )
+        processor = GraphJobProcessor(repository, image_pipeline, MockVoiceProvider(), MockVideoProvider())
+    else:
+        processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
     return SQSConsumer(sqs, repository, processor, settings)
 
 

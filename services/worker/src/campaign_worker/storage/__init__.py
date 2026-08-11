@@ -1,0 +1,1 @@
+"""Private artifact persistence adapters."""

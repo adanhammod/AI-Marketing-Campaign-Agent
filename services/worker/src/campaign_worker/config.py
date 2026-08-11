@@ -8,6 +8,12 @@ from .errors import ConfigurationError
 class Settings:
     aws_region: str | None = None
     queue_url: str | None = None
+    artifact_bucket: str | None = None
+    pexels_api_key: str | None = None
+    bedrock_image_query_model_id: str | None = None
+    pexels_candidate_count: int = 15
+    image_http_timeout_seconds: float = 20
+    image_max_download_bytes: int = 25_000_000
     table_name: str | None = None
     wait_time_seconds: int = 20
     batch_size: int = 1
@@ -36,12 +42,28 @@ class Settings:
         if not 1 <= self.health_port <= 65535:
             raise ConfigurationError("health port must be between 1 and 65535")
 
+    def validate_image_pipeline(self) -> None:
+        if not self.artifact_bucket or not self.pexels_api_key or not self.bedrock_image_query_model_id:
+            raise ConfigurationError("artifact bucket, Pexels API key, and Bedrock query model are required")
+        if not 1 <= self.pexels_candidate_count <= 40:
+            raise ConfigurationError("Pexels candidate count must be between 1 and 40")
+        if self.image_http_timeout_seconds <= 0:
+            raise ConfigurationError("image HTTP timeout must be positive")
+        if self.image_max_download_bytes < 1:
+            raise ConfigurationError("image download bound must be positive")
+
     @classmethod
     def from_env(cls) -> "Settings":
         value = cls(
             aws_region=os.getenv("AWS_REGION"),
             queue_url=os.getenv("SQS_QUEUE_URL"),
             table_name=os.getenv("DYNAMODB_TABLE_NAME"),
+            artifact_bucket=os.getenv("CAMPAIGN_ARTIFACT_BUCKET"),
+            pexels_api_key=os.getenv("PEXELS_API_KEY"),
+            bedrock_image_query_model_id=os.getenv("BEDROCK_IMAGE_QUERY_MODEL_ID"),
+            pexels_candidate_count=int(os.getenv("PEXELS_CANDIDATE_COUNT", "15")),
+            image_http_timeout_seconds=float(os.getenv("IMAGE_HTTP_TIMEOUT_SECONDS", "20")),
+            image_max_download_bytes=int(os.getenv("IMAGE_MAX_DOWNLOAD_BYTES", "25000000")),
             wait_time_seconds=int(os.getenv("SQS_WAIT_TIME_SECONDS", "20")),
             batch_size=int(os.getenv("SQS_BATCH_SIZE", "1")),
             visibility_timeout_seconds=int(os.getenv("SQS_VISIBILITY_TIMEOUT_SECONDS", "180")),
@@ -55,3 +77,5 @@ class Settings:
         )
         value.validate()
         return value
+        if value.environment != "test":
+            value.validate_image_pipeline()

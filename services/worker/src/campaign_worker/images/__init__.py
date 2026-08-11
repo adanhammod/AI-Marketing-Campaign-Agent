@@ -1,0 +1,1 @@
+"""Stock-image acquisition pipeline."""

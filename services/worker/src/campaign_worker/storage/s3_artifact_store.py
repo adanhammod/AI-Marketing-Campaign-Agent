@@ -1,0 +1,94 @@
+import hashlib
+import json
+from datetime import UTC, datetime
+from typing import Any, cast
+
+from botocore.exceptions import ClientError  # type: ignore[import-untyped]
+from campaign_contracts.campaign import CampaignVersion
+
+from campaign_worker.errors import WorkflowOperationError
+from campaign_worker.images.models import NormalizedImage
+from campaign_worker.images.pipeline import deterministic_artifact_id
+
+from .artifact_store import StoredImage
+
+
+class S3ArtifactStore:
+    def __init__(self, client: Any, bucket: str) -> None:
+        self._client = client
+        self._bucket = bucket
+
+    @staticmethod
+    def _prefix(version: CampaignVersion, scene_number: int) -> str:
+        return f"campaigns/{version.campaign_id}/versions/{version.campaign_version}/images/scene-{scene_number}"
+
+    def reconcile(self, version: CampaignVersion, scene_number: int, fingerprint: str) -> StoredImage | None:
+        prefix = self._prefix(version, scene_number)
+        try:
+            image = self._client.get_object(Bucket=self._bucket, Key=f"{prefix}.jpg")["Body"].read()
+            raw_metadata = self._client.get_object(Bucket=self._bucket, Key=f"{prefix}.metadata.json")["Body"].read()
+            metadata = json.loads(raw_metadata)
+            checksum = hashlib.sha256(image).hexdigest()
+            if (
+                metadata["campaign_id"] != str(version.campaign_id)
+                or metadata["campaign_version"] != version.campaign_version
+                or metadata["scene_number"] != scene_number
+                or metadata["storyboard_fingerprint"] != fingerprint
+                or metadata["normalized_checksum"] != checksum
+            ):
+                return None
+            return StoredImage(
+                artifact_id=deterministic_artifact_id(version.campaign_id, version.campaign_version, scene_number),
+                checksum_sha256=checksum,
+                size_bytes=len(image),
+                created_at=datetime.fromisoformat(metadata["acquisition_timestamp"]),
+                pexels_photo_id=int(metadata["pexels_photo_id"]),
+            )
+        except ClientError as exc:
+            error_code = str(exc.response.get("Error", {}).get("Code", ""))
+            if error_code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise WorkflowOperationError(
+                "STORAGE_UNAVAILABLE", "artifact reconciliation unavailable", retryable=True
+            ) from exc
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        except Exception as exc:
+            raise WorkflowOperationError(
+                "STORAGE_UNAVAILABLE", "artifact reconciliation unavailable", retryable=True
+            ) from exc
+
+    def put(
+        self,
+        version: CampaignVersion,
+        scene_number: int,
+        image: NormalizedImage,
+        metadata: dict[str, object],
+    ) -> StoredImage:
+        prefix = self._prefix(version, scene_number)
+        created_at = datetime.now(UTC)
+        safe_metadata = {**metadata, "acquisition_timestamp": created_at.isoformat()}
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=f"{prefix}.jpg",
+                Body=image.data,
+                ContentType="image/jpeg",
+                ServerSideEncryption="AES256",
+            )
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=f"{prefix}.metadata.json",
+                Body=json.dumps(safe_metadata, sort_keys=True, separators=(",", ":")).encode(),
+                ContentType="application/json",
+                ServerSideEncryption="AES256",
+            )
+        except Exception as exc:
+            raise WorkflowOperationError("STORAGE_UNAVAILABLE", "artifact storage unavailable", retryable=True) from exc
+        return StoredImage(
+            artifact_id=deterministic_artifact_id(version.campaign_id, version.campaign_version, scene_number),
+            checksum_sha256=image.checksum_sha256,
+            size_bytes=len(image.data),
+            created_at=created_at,
+            pexels_photo_id=cast(int, metadata["pexels_photo_id"]),
+        )

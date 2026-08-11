@@ -6,6 +6,7 @@ from campaign_contracts.enums import WorkflowStep
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 
@@ -65,7 +66,7 @@ def build_default_graph(repository: WorkflowRepository, is_cancelled: Callable[[
 def build_start_graph(
     repository: WorkflowRepository,
     is_cancelled: Callable[[], Awaitable[bool]],
-    image_provider: ImageProvider,
+    image_provider: ImageProvider | ImageAssetPipeline,
     voice_provider: VoiceProvider,
     video_provider: VideoProvider,
 ) -> _CompiledGraph:
@@ -78,6 +79,12 @@ def build_start_graph(
         # with the WorkflowStep that was executing.
         return with_failure_attribution(step)(cancellable(name, with_step_tracking(step, repository)(fn)))
 
+    image_node = (
+        _nodes.make_generate_images_node(image_provider)
+        if isinstance(image_provider, ImageProvider)
+        else _nodes.make_acquire_images_node(image_provider, is_cancelled)
+    )
+
     return build_graph(
         nodes={
             "receive_request": cancellable("receive_request", _nodes.receive_request),
@@ -86,9 +93,7 @@ def build_start_graph(
             "create_strategy": tracked_step("create_strategy", WorkflowStep.STRATEGY, _nodes.create_strategy),
             "generate_copy": tracked_step("generate_copy", WorkflowStep.COPY, _nodes.generate_copy),
             "create_storyboard": tracked_step("create_storyboard", WorkflowStep.STORYBOARD, _nodes.create_storyboard),
-            "generate_images": tracked_step(
-                "generate_images", WorkflowStep.IMAGES, _nodes.make_generate_images_node(image_provider)
-            ),
+            "generate_images": tracked_step("generate_images", WorkflowStep.IMAGES, image_node),
             "generate_voiceover": cancellable(
                 "generate_voiceover", _nodes.make_generate_voiceover_node(voice_provider)
             ),

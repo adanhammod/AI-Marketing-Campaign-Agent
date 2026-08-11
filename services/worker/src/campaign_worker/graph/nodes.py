@@ -1,4 +1,5 @@
 import hashlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -14,6 +15,8 @@ from campaign_contracts.campaign import (
 from campaign_contracts.enums import CampaignStatus, ErrorComponent, WorkflowStep
 from campaign_contracts.errors import SanitizedWorkflowError
 
+from campaign_worker.errors import WorkflowOperationError
+from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.models import ImageGenerationRequest, VideoRenderRequest
 from campaign_worker.providers.voice_models import VoiceGenerationRequest
@@ -116,6 +119,15 @@ def make_generate_images_node(provider: ImageProvider) -> NodeFn:
         return {"version": version.model_copy(update={"image_artifacts": artifacts})}
 
     return generate_images
+
+
+def make_acquire_images_node(pipeline: ImageAssetPipeline, is_cancelled: Callable[[], Awaitable[bool]]) -> NodeFn:
+    async def acquire_images(state: GraphState) -> GraphState:
+        version = state["version"]
+        artifacts = await pipeline.acquire(version, is_cancelled)
+        return {"version": version.model_copy(update={"image_artifacts": artifacts})}
+
+    return acquire_images
 
 
 def make_generate_voiceover_node(provider: VoiceProvider) -> NodeFn:
@@ -243,14 +255,20 @@ async def handle_failure(state: GraphState, error: BaseException, *, step: Workf
         return {**state, "version": updated_version}
 
     next_attempt = version.retry.attempt + 1
-    exhausted = next_attempt >= version.retry.max_attempts
+    operation_error = error if isinstance(error, WorkflowOperationError) else None
+    requested_retry = operation_error.retryable if operation_error is not None else True
+    retryable = requested_retry and next_attempt < version.retry.max_attempts
     sanitized_error = SanitizedWorkflowError(
-        code="RETRY_EXHAUSTED" if exhausted else "INTERNAL_ERROR",
+        code=(
+            operation_error.code
+            if operation_error is not None
+            else ("RETRY_EXHAUSTED" if not retryable else "INTERNAL_ERROR")
+        ),
         message=str(error)[:500],
         component=ErrorComponent.LANGGRAPH_WORKER,
         workflow_step=step,
         attempt=next_attempt,
-        retryable=not exhausted,
+        retryable=retryable,
         timestamp=now,
         correlation_id=uuid4(),
         campaign_id=version.campaign_id,
@@ -262,7 +280,7 @@ async def handle_failure(state: GraphState, error: BaseException, *, step: Workf
             "status": CampaignStatus.FAILED,
             "error": sanitized_error,
             "retry": version.retry.model_copy(
-                update={"attempt": next_attempt, "retryable": not exhausted, "resume_step": step}
+                update={"attempt": next_attempt, "retryable": retryable, "resume_step": step}
             ),
         }
     )
