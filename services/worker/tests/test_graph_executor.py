@@ -28,7 +28,7 @@ class _InMemoryStepRepository(WorkflowRepository):
     async def get_step(self, campaign_id: UUID, campaign_version: int, step: WorkflowStep) -> WorkflowStepRecord | None:
         return self.steps.get((campaign_id, campaign_version, step))
 
-    async def save_step(self, record: WorkflowStepRecord) -> None:
+    async def save_step(self, record: WorkflowStepRecord, events=None) -> None:
         self.steps[(record.campaign_id, record.campaign_version, record.step)] = record
 
     async def load_version(self, message):
@@ -58,7 +58,7 @@ class _InMemoryStepRepository(WorkflowRepository):
     async def available(self):
         raise NotImplementedError
 
-    async def save_version(self, version, lease):
+    async def save_version(self, version, lease, events=None):
         raise NotImplementedError
 
 

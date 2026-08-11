@@ -5,6 +5,7 @@ from uuid import UUID
 
 from campaign_contracts.campaign import CampaignVersion
 from campaign_contracts.enums import WorkflowStep
+from campaign_contracts.events import CampaignEvent
 from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.steps import WorkflowStepRecord
 
@@ -54,7 +55,9 @@ class WorkflowRepository(ABC):
     ) -> WorkflowStepRecord | None: ...
 
     @abstractmethod
-    async def save_step(self, record: WorkflowStepRecord) -> None: ...
+    async def save_step(self, record: WorkflowStepRecord, events: list[CampaignEvent] | None = None) -> None: ...
 
     @abstractmethod
-    async def save_version(self, version: CampaignVersion, lease: LeaseContext) -> None: ...
+    async def save_version(
+        self, version: CampaignVersion, lease: LeaseContext, events: list[CampaignEvent] | None = None
+    ) -> None: ...

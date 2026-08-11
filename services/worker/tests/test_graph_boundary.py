@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata, StrategyOutput
-from campaign_contracts.enums import CampaignStatus, StepStatus, WorkflowStep
+from campaign_contracts.enums import CampaignEventType, CampaignStatus, StepStatus, WorkflowStep
 from campaign_contracts.steps import WorkflowStepRecord
 
 from campaign_worker.graph.boundary import with_step_tracking
@@ -16,12 +16,14 @@ class FakeStepRepository(WorkflowRepository):
     def __init__(self, seed: dict[tuple, WorkflowStepRecord] | None = None) -> None:
         self.steps: dict[tuple, WorkflowStepRecord] = dict(seed or {})
         self.save_calls: list[WorkflowStepRecord] = []
+        self.event_calls: list[list] = []
 
     async def get_step(self, campaign_id: UUID, campaign_version: int, step: WorkflowStep) -> WorkflowStepRecord | None:
         return self.steps.get((campaign_id, campaign_version, step))
 
-    async def save_step(self, record: WorkflowStepRecord) -> None:
+    async def save_step(self, record: WorkflowStepRecord, events: list | None = None) -> None:
         self.save_calls.append(record)
+        self.event_calls.append(events)
         self.steps[(record.campaign_id, record.campaign_version, record.step)] = record
 
     async def load_version(self, message):
@@ -51,7 +53,7 @@ class FakeStepRepository(WorkflowRepository):
     async def available(self):
         raise NotImplementedError
 
-    async def save_version(self, version, lease):
+    async def save_version(self, version, lease, events=None):
         raise NotImplementedError
 
 
@@ -116,6 +118,33 @@ async def test_missing_step_executes_normally():
     assert calls == ["ran"]
     saved_statuses = [record.status for record in repository.save_calls]
     assert saved_statuses == [StepStatus.RUNNING, StepStatus.SUCCEEDED]
+    emitted_types = [event.event_type for events in repository.event_calls for event in events]
+    assert emitted_types == [CampaignEventType.STEP_STARTED, CampaignEventType.STEP_COMPLETED]
+
+
+@pytest.mark.asyncio
+async def test_completion_event_is_not_recorded_when_succeeded_persistence_fails():
+    class FailingCompletionRepository(FakeStepRepository):
+        async def save_step(self, record: WorkflowStepRecord, events: list | None = None) -> None:
+            if record.status == StepStatus.SUCCEEDED:
+                raise RuntimeError("durable completion failed")
+            await super().save_step(record, events)
+
+    repository = FailingCompletionRepository()
+
+    async def node(state: GraphState) -> GraphState:
+        return state
+
+    version = _version()
+    wrapped = with_step_tracking(WorkflowStep.STRATEGY, repository)(node)
+
+    with pytest.raises(RuntimeError, match="durable completion failed"):
+        await wrapped({"version": version})
+
+    assert [record.status for record in repository.save_calls] == [StepStatus.RUNNING]
+    assert [event.event_type for events in repository.event_calls for event in events] == [
+        CampaignEventType.STEP_STARTED
+    ]
 
 
 @pytest.mark.asyncio
@@ -136,6 +165,7 @@ async def test_rerun_skips_completed_step():
 
     assert calls == []
     assert repository.save_calls == []
+    assert repository.event_calls == []
 
 
 @pytest.mark.asyncio
@@ -175,6 +205,8 @@ async def test_failed_step_is_retried_not_skipped():
 
     assert calls == ["ran"]
     assert [record.status for record in repository.save_calls] == [StepStatus.RUNNING, StepStatus.SUCCEEDED]
+    emitted_types = [event.event_type for events in repository.event_calls for event in events]
+    assert emitted_types == [CampaignEventType.STEP_STARTED, CampaignEventType.STEP_COMPLETED]
 
 
 @pytest.mark.asyncio

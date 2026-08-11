@@ -217,7 +217,8 @@ class DynamoDBCampaignRepository(CampaignRepository):
     ) -> None:
         expected_meta_lock = aggregate.lock_version - 1
         expected_version_lock = version.lock_version - 1
-        if expected_meta_lock < 0 or expected_version_lock < 0:
+        expected_event_sequence = aggregate.event_sequence - len(events)
+        if expected_meta_lock < 0 or expected_version_lock < 0 or expected_event_sequence < 0:
             raise InvalidStateTransition("lock version must advance by one")
         approval_payload = approval.model_dump(mode="json", exclude_none=True, by_alias=True)
         values = {
@@ -233,6 +234,7 @@ class DynamoDBCampaignRepository(CampaignRepository):
             ":job_id": _SERIALIZER.serialize(str(version.job_id)),
             ":approval": _SERIALIZER.serialize(approval_payload),
             ":event_seq": _SERIALIZER.serialize(aggregate.event_sequence),
+            ":old_event_seq": _SERIALIZER.serialize(expected_event_sequence),
         }
         transaction = [
             {
@@ -243,7 +245,10 @@ class DynamoDBCampaignRepository(CampaignRepository):
                         "SET current_status=:status, current_progress=:progress, updated_at=:updated, "
                         "lock_version=:new_lock, event_sequence=:event_seq, GSI2PK=:gsi2pk, GSI2SK=:gsi2sk"
                     ),
-                    "ConditionExpression": "lock_version=:old_meta_lock AND current_version=:version_number",
+                    "ConditionExpression": (
+                        "lock_version=:old_meta_lock AND current_version=:version_number "
+                        "AND event_sequence=:old_event_seq"
+                    ),
                     "ExpressionAttributeValues": {
                         key: values[key]
                         for key in (
@@ -256,6 +261,7 @@ class DynamoDBCampaignRepository(CampaignRepository):
                             ":version_number",
                             ":gsi2pk",
                             ":gsi2sk",
+                            ":old_event_seq",
                         )
                     },
                 }
@@ -305,7 +311,8 @@ class DynamoDBCampaignRepository(CampaignRepository):
     ) -> None:
         expected_meta_lock = aggregate.lock_version - 1
         expected_version_lock = version.lock_version - 1
-        if expected_meta_lock < 0 or expected_version_lock < 0:
+        expected_event_sequence = aggregate.event_sequence - len(events)
+        if expected_meta_lock < 0 or expected_version_lock < 0 or expected_event_sequence < 0:
             raise InvalidStateTransition("lock version must advance by one")
         if version.cancellation_reason is None or version.cancelled_at is None:
             raise RepositoryFailure("cancellation reason and timestamp are required")
@@ -321,6 +328,7 @@ class DynamoDBCampaignRepository(CampaignRepository):
             ":reason": _SERIALIZER.serialize(version.cancellation_reason),
             ":cancelled_at": _SERIALIZER.serialize(version.cancelled_at.isoformat().replace("+00:00", "Z")),
             ":event_seq": _SERIALIZER.serialize(aggregate.event_sequence),
+            ":old_event_seq": _SERIALIZER.serialize(expected_event_sequence),
         }
         transaction = [
             {
@@ -331,7 +339,10 @@ class DynamoDBCampaignRepository(CampaignRepository):
                         "SET current_status=:status, updated_at=:updated, lock_version=:new_lock, "
                         "event_sequence=:event_seq, GSI2PK=:gsi2pk, GSI2SK=:gsi2sk"
                     ),
-                    "ConditionExpression": "lock_version=:old_meta_lock AND current_version=:version_number",
+                    "ConditionExpression": (
+                        "lock_version=:old_meta_lock AND current_version=:version_number "
+                        "AND event_sequence=:old_event_seq"
+                    ),
                     "ExpressionAttributeValues": {
                         key: values[key]
                         for key in (
@@ -343,6 +354,7 @@ class DynamoDBCampaignRepository(CampaignRepository):
                             ":version_number",
                             ":gsi2pk",
                             ":gsi2sk",
+                            ":old_event_seq",
                         )
                     },
                 }
@@ -384,7 +396,8 @@ class DynamoDBCampaignRepository(CampaignRepository):
     ) -> None:
         expected_meta_lock = aggregate.lock_version - 1
         expected_version_lock = version.lock_version - 1
-        if expected_meta_lock < 0 or expected_version_lock < 0:
+        expected_event_sequence = aggregate.event_sequence - len(events)
+        if expected_meta_lock < 0 or expected_version_lock < 0 or expected_event_sequence < 0:
             raise InvalidStateTransition("lock version must advance by one")
         values = {
             ":status": _SERIALIZER.serialize(version.status.value),
@@ -397,6 +410,7 @@ class DynamoDBCampaignRepository(CampaignRepository):
             ":gsi2sk": _SERIALIZER.serialize(f"{version.updated_at.isoformat()}#{version.campaign_id}"),
             ":job_id": _SERIALIZER.serialize(str(version.job_id)),
             ":event_seq": _SERIALIZER.serialize(aggregate.event_sequence),
+            ":old_event_seq": _SERIALIZER.serialize(expected_event_sequence),
         }
         transaction = [
             {
@@ -407,7 +421,10 @@ class DynamoDBCampaignRepository(CampaignRepository):
                         "SET current_status=:status, updated_at=:updated, lock_version=:new_lock, "
                         "event_sequence=:event_seq, GSI2PK=:gsi2pk, GSI2SK=:gsi2sk"
                     ),
-                    "ConditionExpression": "lock_version=:old_meta_lock AND current_version=:version_number",
+                    "ConditionExpression": (
+                        "lock_version=:old_meta_lock AND current_version=:version_number "
+                        "AND event_sequence=:old_event_seq"
+                    ),
                     "ExpressionAttributeValues": {
                         key: values[key]
                         for key in (
@@ -419,6 +436,7 @@ class DynamoDBCampaignRepository(CampaignRepository):
                             ":version_number",
                             ":gsi2pk",
                             ":gsi2sk",
+                            ":old_event_seq",
                         )
                     },
                 }
@@ -455,7 +473,8 @@ class DynamoDBCampaignRepository(CampaignRepository):
     ) -> None:
         expected_meta_lock = aggregate.lock_version - 1
         expected_parent_lock = parent_version.lock_version - 1
-        if expected_meta_lock < 0 or expected_parent_lock < 0:
+        expected_event_sequence = aggregate.event_sequence - len(events)
+        if expected_meta_lock < 0 or expected_parent_lock < 0 or expected_event_sequence < 0:
             raise InvalidStateTransition("lock version must advance by one")
         values = {
             ":new_version_number": _SERIALIZER.serialize(child_version.campaign_version),
@@ -470,6 +489,7 @@ class DynamoDBCampaignRepository(CampaignRepository):
             ":gsi2pk": _SERIALIZER.serialize(f"STATUS#{child_version.status.value}"),
             ":gsi2sk": _SERIALIZER.serialize(f"{child_version.updated_at.isoformat()}#{child_version.campaign_id}"),
             ":event_seq": _SERIALIZER.serialize(aggregate.event_sequence),
+            ":old_event_seq": _SERIALIZER.serialize(expected_event_sequence),
         }
         transaction = [
             {
@@ -481,7 +501,10 @@ class DynamoDBCampaignRepository(CampaignRepository):
                         "updated_at=:updated, lock_version=:new_meta_lock, event_sequence=:event_seq, "
                         "GSI2PK=:gsi2pk, GSI2SK=:gsi2sk"
                     ),
-                    "ConditionExpression": "lock_version=:old_meta_lock AND current_version=:parent_version_number",
+                    "ConditionExpression": (
+                        "lock_version=:old_meta_lock AND current_version=:parent_version_number "
+                        "AND event_sequence=:old_event_seq"
+                    ),
                     "ExpressionAttributeValues": {
                         key: values[key]
                         for key in (
@@ -494,6 +517,7 @@ class DynamoDBCampaignRepository(CampaignRepository):
                             ":parent_version_number",
                             ":gsi2pk",
                             ":gsi2sk",
+                            ":old_event_seq",
                         )
                     },
                 }

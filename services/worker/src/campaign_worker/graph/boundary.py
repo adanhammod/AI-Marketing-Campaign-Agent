@@ -1,14 +1,41 @@
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from uuid import uuid4
 
-from campaign_contracts.enums import StepStatus, WorkflowStep
+from campaign_contracts.enums import Actor, CampaignEventType, StepStatus, WorkflowStep
+from campaign_contracts.events import CampaignEvent
 from campaign_contracts.steps import WorkflowStepRecord
 
+from campaign_worker.events import deterministic_event_id
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 
 from .state import GraphState
 
 NodeFn = Callable[[GraphState], Awaitable[GraphState]]
+
+
+def _step_event(
+    state: GraphState, step: WorkflowStep, event_type: CampaignEventType, *, occurred_at: datetime
+) -> CampaignEvent:
+    version = state["version"]
+    # version.retry.attempt only advances on a real handle_failure-driven retry cycle, so
+    # it discriminates genuine re-execution attempts from a plain SQS redelivery of the
+    # same attempt, which must derive the exact same event_id (see events.py).
+    discriminator = f"{step.value}:{version.retry.attempt}"
+    return CampaignEvent(
+        event_id=deterministic_event_id(version.campaign_id, version.campaign_version, event_type, discriminator),
+        campaign_id=version.campaign_id,
+        campaign_version=version.campaign_version,
+        event_sequence=1,  # placeholder -- the repository assigns the real value transactionally
+        event_type=event_type,
+        status=version.status,
+        step=step,
+        progress_percent=version.progress_percent,
+        occurred_at=occurred_at,
+        actor=Actor.LANGGRAPH_WORKER,
+        correlation_id=state.get("correlation_id") or uuid4(),
+        job_id=version.job_id,
+    )
 
 
 def with_step_tracking(step: WorkflowStep, repository: WorkflowRepository) -> Callable[[NodeFn], NodeFn]:
@@ -28,7 +55,8 @@ def with_step_tracking(step: WorkflowStep, repository: WorkflowRepository) -> Ca
                     started_at=now,
                     created_at=now,
                     updated_at=now,
-                )
+                ),
+                [_step_event(state, step, CampaignEventType.STEP_STARTED, occurred_at=now)],
             )
             result = await fn(state)
             completed_at = datetime.now(UTC)
@@ -42,7 +70,8 @@ def with_step_tracking(step: WorkflowStep, repository: WorkflowRepository) -> Ca
                     completed_at=completed_at,
                     created_at=now,
                     updated_at=completed_at,
-                )
+                ),
+                [_step_event(result, step, CampaignEventType.STEP_COMPLETED, occurred_at=completed_at)],
             )
             return result
 

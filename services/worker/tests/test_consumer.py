@@ -131,10 +131,10 @@ class FakeRepository(WorkflowRepository):
     async def get_step(self, campaign_id, campaign_version, step):
         return None
 
-    async def save_step(self, record):
+    async def save_step(self, record, events=None):
         pass
 
-    async def save_version(self, version, lease):
+    async def save_version(self, version, lease, events=None):
         self.version = version
 
 

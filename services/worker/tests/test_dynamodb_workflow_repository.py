@@ -3,20 +3,24 @@ from uuid import uuid4
 
 import boto3
 import pytest
-from boto3.dynamodb.types import TypeSerializer
+from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
+from botocore.exceptions import ClientError
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignConstraints, CampaignVersion, RetryMetadata
-from campaign_contracts.dynamodb import pk, serialize_meta, serialize_version, version_sk
-from campaign_contracts.enums import CampaignStatus, SQSOperation, StepStatus, WorkflowStep
+from campaign_contracts.dynamodb import meta_sk, pk, serialize_meta, serialize_version, version_sk
+from campaign_contracts.enums import Actor, CampaignEventType, CampaignStatus, SQSOperation, StepStatus, WorkflowStep
+from campaign_contracts.events import CampaignEvent
 from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.steps import WorkflowStepRecord
 from moto import mock_aws
 
-from campaign_worker.errors import LeaseConflict, LeaseLost
+from campaign_worker.errors import LeaseConflict, LeaseLost, PersistenceUnavailable
 from campaign_worker.repositories.dynamodb_workflow_repository import DynamoDBWorkflowRepository
 
 TABLE = "campaign-worker-test"
 SERIALIZER = TypeSerializer()
+
+DESERIALIZER = TypeDeserializer()
 
 
 def marshal(item):
@@ -268,3 +272,190 @@ async def test_already_running_worker_cannot_overwrite_a_concurrent_api_cancella
     reloaded = await repository.load_version(message)
     assert reloaded is not None
     assert reloaded.status == CampaignStatus.CANCELLED
+
+
+def event_for(message: SQSJobMessage, event_type: CampaignEventType, discriminator: str) -> CampaignEvent:
+    from campaign_worker.events import deterministic_event_id
+
+    return CampaignEvent(
+        event_id=deterministic_event_id(
+            message.campaign_id,
+            message.campaign_version,
+            event_type,
+            discriminator,
+        ),
+        campaign_id=message.campaign_id,
+        campaign_version=message.campaign_version,
+        event_sequence=1,
+        event_type=event_type,
+        status=CampaignStatus.GENERATING_STRATEGY,
+        step=WorkflowStep.STRATEGY,
+        progress_percent=10,
+        occurred_at=datetime.now(UTC),
+        actor=Actor.LANGGRAPH_WORKER,
+        correlation_id=message.correlation_id,
+        job_id=message.job_id,
+    )
+
+
+def event_items(client, campaign_id):
+    response = client.query(
+        TableName=TABLE,
+        KeyConditionExpression="PK=:pk AND begins_with(SK,:prefix)",
+        ExpressionAttributeValues={
+            ":pk": SERIALIZER.serialize(pk(campaign_id)),
+            ":prefix": SERIALIZER.serialize("EVENT#"),
+        },
+    )
+    return [{key: DESERIALIZER.deserialize(value) for key, value in item.items()} for item in response["Items"]]
+
+
+def meta_sequence(client, campaign_id):
+    response = client.get_item(
+        TableName=TABLE,
+        Key=marshal({"PK": pk(campaign_id), "SK": meta_sk()}),
+        ConsistentRead=True,
+    )
+    return int(DESERIALIZER.deserialize(response["Item"]["event_sequence"]))
+
+
+@pytest.mark.asyncio
+async def test_event_carrying_step_write_is_atomic_and_advances_sequence(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    record = WorkflowStepRecord(
+        campaign_id=message.campaign_id,
+        campaign_version=1,
+        step=WorkflowStep.STRATEGY,
+        status=StepStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+    )
+
+    await repository.save_step(
+        record,
+        [event_for(message, CampaignEventType.STEP_STARTED, "STRATEGY:0")],
+    )
+
+    assert meta_sequence(client, message.campaign_id) == 1
+    items = event_items(client, message.campaign_id)
+    assert len(items) == 1
+    assert items[0]["event_sequence"] == 1
+    assert items[0]["event_type"] == CampaignEventType.STEP_STARTED.value
+    saved = await repository.get_step(message.campaign_id, 1, WorkflowStep.STRATEGY)
+    assert saved is not None and saved.status == StepStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_duplicate_deterministic_event_is_a_noop_without_sequence_increment(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    record = WorkflowStepRecord(
+        campaign_id=message.campaign_id,
+        campaign_version=1,
+        step=WorkflowStep.STRATEGY,
+        status=StepStatus.REUSED,
+        created_at=now,
+        updated_at=now,
+    )
+    event = event_for(message, CampaignEventType.STEP_REUSED, WorkflowStep.STRATEGY.value)
+
+    await repository.save_step(record, [event])
+    await repository.save_step(record, [event])
+
+    assert meta_sequence(client, message.campaign_id) == 1
+    assert len(event_items(client, message.campaign_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_event_sequence_collision_is_retried_and_remains_gapless(database, monkeypatch):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    original = client.transact_write_items
+    attempts = 0
+
+    def collide_once(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ClientError(
+                {
+                    "Error": {"Code": "TransactionCanceledException", "Message": "collision"},
+                    "CancellationReasons": [
+                        {"Code": "None"},
+                        {"Code": "ConditionalCheckFailed"},
+                        {"Code": "None"},
+                    ],
+                },
+                "TransactWriteItems",
+            )
+        return original(**kwargs)
+
+    monkeypatch.setattr(client, "transact_write_items", collide_once)
+    now = datetime.now(UTC)
+    record = WorkflowStepRecord(
+        campaign_id=message.campaign_id,
+        campaign_version=1,
+        step=WorkflowStep.STRATEGY,
+        status=StepStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+    )
+
+    await repository.save_step(record, [event_for(message, CampaignEventType.STEP_STARTED, "STRATEGY:0")])
+
+    assert attempts == 2
+    assert meta_sequence(client, message.campaign_id) == 1
+    assert [item["event_sequence"] for item in event_items(client, message.campaign_id)] == [1]
+
+
+@pytest.mark.asyncio
+async def test_event_sequence_collision_exhausts_bounded_retry_budget(database, monkeypatch):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+
+    def always_collide(**kwargs):
+        raise ClientError(
+            {
+                "Error": {"Code": "TransactionCanceledException", "Message": "collision"},
+                "CancellationReasons": [
+                    {"Code": "None"},
+                    {"Code": "ConditionalCheckFailed"},
+                    {"Code": "None"},
+                ],
+            },
+            "TransactWriteItems",
+        )
+
+    monkeypatch.setattr(client, "transact_write_items", always_collide)
+    now = datetime.now(UTC)
+    record = WorkflowStepRecord(
+        campaign_id=message.campaign_id,
+        campaign_version=1,
+        step=WorkflowStep.STRATEGY,
+        status=StepStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+    )
+
+    with pytest.raises(PersistenceUnavailable, match="retry budget"):
+        await repository.save_step(record, [event_for(message, CampaignEventType.STEP_STARTED, "STRATEGY:0")])
+
+
+@pytest.mark.asyncio
+async def test_duplicate_event_does_not_swallow_a_real_lease_conflict(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    assert loaded is not None
+    event = event_for(message, CampaignEventType.FAILED, "1")
+
+    await repository.save_version(loaded, lease, [event])
+
+    wrong_owner = lease.__class__("worker-b", lease.lock_version, lease.expires_at)
+    with pytest.raises(LeaseLost):
+        await repository.save_version(loaded, wrong_owner, [event])

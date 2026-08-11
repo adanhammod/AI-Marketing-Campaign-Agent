@@ -14,7 +14,14 @@ from campaign_contracts.campaign import (
     StoryboardScene,
     StrategyOutput,
 )
-from campaign_contracts.enums import CampaignStatus, RevisionTarget, SQSOperation, StepStatus, WorkflowStep
+from campaign_contracts.enums import (
+    CampaignEventType,
+    CampaignStatus,
+    RevisionTarget,
+    SQSOperation,
+    StepStatus,
+    WorkflowStep,
+)
 from campaign_contracts.errors import SanitizedWorkflowError
 from campaign_contracts.sqs import SQSJobMessage
 
@@ -149,14 +156,18 @@ class _RecordingRepository(WorkflowRepository):
     def __init__(self) -> None:
         self.steps: dict[tuple, object] = {}
         self.save_calls: list[CampaignVersion] = []
+        self.step_events: list[list] = []
+        self.version_events: list[list] = []
 
     async def get_step(self, campaign_id, campaign_version, step):
         return self.steps.get((campaign_id, campaign_version, step))
 
-    async def save_step(self, record):
+    async def save_step(self, record, events=None):
+        self.step_events.append(events)
         self.steps[(record.campaign_id, record.campaign_version, record.step)] = record
 
-    async def save_version(self, version, lease):
+    async def save_version(self, version, lease, events=None):
+        self.version_events.append(events)
         self.save_calls.append(version)
 
     async def load_version(self, message):
@@ -196,20 +207,20 @@ class _TrackingRepository(_RecordingRepository):
         super().__init__()
         self.running_steps: list[WorkflowStep] = []
 
-    async def save_step(self, record):
+    async def save_step(self, record, events=None):
         if record.status == StepStatus.RUNNING:
             self.running_steps.append(record.step)
-        await super().save_step(record)
+        await super().save_step(record, events)
 
 
 class _SeedingFailsRepository(_RecordingRepository):
     """Fails only the REUSED-seeding writes, simulating a persistence failure that
     must stop processing before any provider/graph work starts."""
 
-    async def save_step(self, record):
+    async def save_step(self, record, events=None):
         if record.status == StepStatus.REUSED:
             raise RuntimeError("simulated seeding failure")
-        await super().save_step(record)
+        await super().save_step(record, events)
 
 
 class _AlwaysFailsImageProvider(ImageProvider):
@@ -254,10 +265,10 @@ class _FailingStepRepository(_RecordingRepository):
         super().__init__()
         self._failing_step = failing_step
 
-    async def save_step(self, record):
+    async def save_step(self, record, events=None):
         if record.step == self._failing_step:
             raise RuntimeError(f"simulated persistence failure for {self._failing_step}")
-        await super().save_step(record)
+        await super().save_step(record, events)
 
 
 def _processor(image_provider=None, video_provider=None, is_cancelled=None, repository=None) -> GraphJobProcessor:
@@ -288,6 +299,9 @@ async def test_start_processes_full_pipeline_and_reaches_ready_for_review():
     assert final.storyboard is not None
     assert len(final.image_artifacts) == 3
     assert final.video_artifact is not None
+    emitted = [event.event_type for events in repository.version_events for event in events]
+    assert emitted.count(CampaignEventType.REVIEW_READY) == 1
+
     assert final.error is None
     assert final.retry.resume_step is None
 
@@ -329,7 +343,6 @@ async def test_resume_runs_only_prepare_final_package():
     await processor.process(start_message, version, _lease())
     approved = repository.save_calls[-1].model_copy(update={"status": CampaignStatus.APPROVED})
     repository.save_calls.clear()
-
     resume_message = _message(SQSOperation.RESUME, approved.campaign_id, approved.job_id, idempotency_key="resume")
     result = await processor.process(resume_message, approved, _lease())
 
@@ -342,6 +355,8 @@ async def test_resume_runs_only_prepare_final_package():
     assert final.retry.resume_step is None
     # single-node graph: astream yields far fewer chunks than the 10+ node START path
     assert len(repository.save_calls) <= 2
+    emitted = [event.event_type for events in repository.version_events for event in events]
+    assert emitted.count(CampaignEventType.FINALIZED) == 1
 
 
 @pytest.mark.asyncio
@@ -394,6 +409,13 @@ async def test_regenerate_copy_seeds_strategy_as_reused_and_skips_its_provider()
     assert final.status == CampaignStatus.READY_FOR_REVIEW
     assert final.strategy == version.strategy  # preserved, not regenerated
     assert final.campaign_copy is not None
+    reused_events = [
+        event
+        for events in repository.step_events
+        for event in events
+        if event.event_type == CampaignEventType.STEP_REUSED
+    ]
+    assert len(reused_events) == 1 and reused_events[0].step == WorkflowStep.STRATEGY
 
 
 @pytest.mark.asyncio
@@ -466,6 +488,14 @@ async def test_regenerate_duplicate_delivery_reseeds_idempotently_without_double
     first = await processor.process(message, version, _lease())
     second = await processor.process(message, version, _lease())
 
+    reused_ids = [
+        event.event_id
+        for events in repository.step_events
+        for event in events
+        if event.event_type == CampaignEventType.STEP_REUSED
+    ]
+    assert len(reused_ids) == 2
+    assert len(set(reused_ids)) == 1
     assert first.completed is True and second.completed is True
     assert WorkflowStep.STRATEGY not in repository.running_steps  # never ran, across either attempt
     assert (
@@ -560,6 +590,13 @@ async def test_images_failure_records_images_as_the_resume_step():
     assert final.strategy is not None
     assert final.campaign_copy is not None
     assert final.storyboard is not None
+    failure_events = [
+        event
+        for events in repository.version_events
+        for event in events
+        if event.event_type == CampaignEventType.FAILED
+    ]
+    assert len(failure_events) == 1 and failure_events[0].details["retryable"] is True
 
 
 @pytest.mark.asyncio
@@ -614,6 +651,13 @@ async def test_cancellation_is_persisted_as_cancelled():
     assert final.error.code == "CANCELLED_BY_USER"
     # cancelled at the very first node, which has no WorkflowStep mapping
     assert final.error.workflow_step is None
+    cancelled_events = [
+        event
+        for events in repository.version_events
+        for event in events
+        if event.event_type == CampaignEventType.CANCELLED
+    ]
+    assert len(cancelled_events) == 1 and cancelled_events[0].status == CampaignStatus.CANCELLED
 
 
 @pytest.mark.asyncio
@@ -680,10 +724,10 @@ class _FullFakeRepository(WorkflowRepository):
     async def get_step(self, campaign_id, campaign_version, step):
         return self.steps.get((campaign_id, campaign_version, step))
 
-    async def save_step(self, record):
+    async def save_step(self, record, events=None):
         self.steps[(record.campaign_id, record.campaign_version, record.step)] = record
 
-    async def save_version(self, version, lease):
+    async def save_version(self, version, lease, events=None):
         self.saved_versions.append(version)
         self.version = version
 
