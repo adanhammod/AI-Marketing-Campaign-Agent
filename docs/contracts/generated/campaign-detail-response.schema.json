@@ -76,6 +76,60 @@
       "title": "ApprovalRecord",
       "type": "object"
     },
+    "ArtifactAttribution": {
+      "additionalProperties": false,
+      "properties": {
+        "attribution_text": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Attribution Text",
+          "type": "string"
+        },
+        "creator_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Creator Name",
+          "type": "string"
+        },
+        "creator_profile_url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Creator Profile Url",
+          "type": "string"
+        },
+        "provider_asset_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Provider Asset Id",
+          "type": "string"
+        },
+        "provider_url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Provider Url",
+          "type": "string"
+        },
+        "source_page_url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Source Page Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider_asset_id",
+        "creator_name",
+        "creator_profile_url",
+        "source_page_url",
+        "provider_url",
+        "attribution_text"
+      ],
+      "title": "ArtifactAttribution",
+      "type": "object"
+    },
     "ArtifactType": {
       "enum": [
         "REFERENCE_IMAGE",
@@ -386,6 +440,17 @@
         "artifact_type": {
           "$ref": "#/$defs/ArtifactType"
         },
+        "attribution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactAttribution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "campaign_id": {
           "format": "uuid",
           "title": "Campaign Id",
@@ -406,6 +471,34 @@
           "title": "Created At",
           "type": "string"
         },
+        "download_url": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "maxLength": 2083,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Download Url"
+        },
+        "download_url_expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Download Url Expires At"
+        },
         "mime_type": {
           "title": "Mime Type",
           "type": "string"
@@ -421,6 +514,20 @@
           ],
           "default": null,
           "title": "Provider"
+        },
+        "scene_number": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scene Number"
         },
         "size_bytes": {
           "minimum": 0,
@@ -771,6 +878,31 @@
     "campaign_version": {
       "title": "Campaign Version",
       "type": "integer"
+    },
+    "cancellation_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cancellation Reason"
+    },
+    "cancelled_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cancelled At"
     },
     "completed_steps": {
       "items": {

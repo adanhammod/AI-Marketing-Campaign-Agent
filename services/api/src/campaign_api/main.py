@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from starlette.responses import Response
 
+from campaign_api.artifacts.artifact_url_signer import ArtifactURLSigner
+from campaign_api.artifacts.s3_artifact_url_signer import S3ArtifactURLSigner
 from campaign_api.config import Settings
 from campaign_api.dependencies import correlation_id_var, get_queue, get_repository
 from campaign_api.errors import configure_logging, register_error_handlers
@@ -25,7 +27,10 @@ class HealthResponse(BaseModel):
 
 
 def create_app(
-    settings: Settings | None = None, repository: CampaignRepository | None = None, queue: JobQueue | None = None
+    settings: Settings | None = None,
+    repository: CampaignRepository | None = None,
+    queue: JobQueue | None = None,
+    artifact_signer: ArtifactURLSigner | None = None,
 ) -> FastAPI:
     resolved = settings or Settings.from_env()
     configure_logging(resolved.log_level)
@@ -33,6 +38,19 @@ def create_app(
     app.state.settings = resolved
     app.state.repository = repository or create_repository(resolved)
     app.state.queue = queue or create_job_queue(resolved)
+
+    if artifact_signer is not None:
+        app.state.artifact_signer = artifact_signer
+    elif resolved.artifact_bucket:
+        import boto3  # type: ignore[import-untyped]
+
+        app.state.artifact_signer = S3ArtifactURLSigner(
+            boto3.client("s3", region_name=resolved.aws_region),
+            resolved.artifact_bucket,
+            resolved.artifact_presigned_expiry_seconds,
+        )
+    else:
+        app.state.artifact_signer = None
 
     @app.middleware("http")
     async def request_context(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

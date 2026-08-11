@@ -13,6 +13,12 @@ class CampaignRepository(ABC):
     ) -> None: ...
     @abstractmethod
     async def get(self, campaign_id: UUID) -> tuple[CampaignAggregateMetadata, CampaignVersion] | None: ...
+    async def get_version(self, campaign_id: UUID, campaign_version: int) -> CampaignVersion | None:
+        record = await self.get(campaign_id)
+        if record is None or record[1].campaign_version != campaign_version:
+            return None
+        return record[1]
+
     @abstractmethod
     async def list(self, *, offset: int, limit: int) -> list[tuple[CampaignAggregateMetadata, CampaignVersion]]: ...
     @abstractmethod

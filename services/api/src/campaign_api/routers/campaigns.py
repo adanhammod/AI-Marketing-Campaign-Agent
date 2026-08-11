@@ -4,6 +4,7 @@ from uuid import UUID
 from campaign_contracts.api import (
     ApprovalRequest,
     ApprovalResponse,
+    CampaignArtifactsResponse,
     CampaignCreationAcceptedResponse,
     CampaignCreationRequest,
     CampaignDetailResponse,
@@ -19,6 +20,7 @@ from campaign_contracts.api import (
     RevisionResponse,
     StandardValidationError,
 )
+from campaign_contracts.enums import ArtifactType
 from fastapi import APIRouter, Depends, Header, Path, Query, Response, status
 
 from campaign_api.config import Settings
@@ -65,6 +67,24 @@ async def get_campaign(
     campaign_id: UUID, service: Annotated[CampaignService, Depends(get_service)]
 ) -> CampaignDetailResponse:
     return await service.get(campaign_id)
+
+
+@router.get(
+    "/{campaign_id}/artifacts",
+    response_model=CampaignArtifactsResponse,
+    responses={
+        404: {"model": NotFoundError},
+        422: {"model": StandardValidationError},
+        503: {"model": StandardValidationError},
+    },
+)
+async def get_campaign_artifacts(
+    campaign_id: UUID,
+    service: Annotated[CampaignService, Depends(get_service)],
+    version: Annotated[int | None, Query(ge=1)] = None,
+    artifact_type: Annotated[ArtifactType | None, Query(alias="type")] = None,
+) -> CampaignArtifactsResponse:
+    return await service.artifacts(campaign_id, version, artifact_type)
 
 
 @router.get(

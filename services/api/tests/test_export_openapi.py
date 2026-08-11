@@ -13,6 +13,7 @@ def test_build_schema_includes_the_live_routes():
         "/api/v1/campaigns",
         "/api/v1/campaigns/{campaign_id}",
         "/api/v1/campaigns/{campaign_id}/versions/{version}/approve",
+        "/api/v1/campaigns/{campaign_id}/artifacts",
         "/api/v1/campaigns/{campaign_id}/versions/{version}/cancel",
         "/api/v1/campaigns/{campaign_id}/versions/{version}/retry",
         "/api/v1/campaigns/{campaign_id}/versions/{version}/revisions",

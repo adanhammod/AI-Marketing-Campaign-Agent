@@ -16,6 +16,8 @@ class Settings:
     sqs_queue_url: str | None = None
     sqs_request_timeout_seconds: float = 10.0
     sqs_endpoint_url: str | None = None
+    artifact_bucket: str | None = None
+    artifact_presigned_expiry_seconds: int = 900
 
     def validate(self) -> None:
         if self.repository_backend not in {"memory", "dynamodb"}:
@@ -28,6 +30,8 @@ class Settings:
             raise ValueError("AWS_REGION and SQS_QUEUE_URL are required when QUEUE_BACKEND=sqs")
         if self.sqs_endpoint_url and self.environment not in {"local", "test"}:
             raise ValueError("SQS_ENDPOINT_URL is allowed only for local testing")
+        if not 1 <= self.artifact_presigned_expiry_seconds <= 900:
+            raise ValueError("ARTIFACT_PRESIGNED_EXPIRY_SECONDS must be between 1 and 900")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,6 +54,8 @@ class Settings:
             sqs_queue_url=os.getenv("SQS_QUEUE_URL"),
             sqs_request_timeout_seconds=float(os.getenv("SQS_REQUEST_TIMEOUT_SECONDS", "10")),
             sqs_endpoint_url=os.getenv("SQS_ENDPOINT_URL"),
+            artifact_bucket=os.getenv("CAMPAIGN_ARTIFACT_BUCKET"),
+            artifact_presigned_expiry_seconds=int(os.getenv("ARTIFACT_PRESIGNED_EXPIRY_SECONDS", "900")),
         )
         settings.validate()
         return settings

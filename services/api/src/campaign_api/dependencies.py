@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, Request
 
+from campaign_api.artifacts.artifact_url_signer import ArtifactURLSigner
 from campaign_api.config import Settings
 from campaign_api.queue.job_queue import JobQueue
 from campaign_api.repositories.campaign_repository import CampaignRepository
@@ -24,10 +25,16 @@ def get_settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
 
 
+def get_artifact_signer(request: Request) -> ArtifactURLSigner | None:
+    return cast(ArtifactURLSigner | None, request.app.state.artifact_signer)
+
+
 def get_service(
-    repository: Annotated[CampaignRepository, Depends(get_repository)], queue: Annotated[JobQueue, Depends(get_queue)]
+    repository: Annotated[CampaignRepository, Depends(get_repository)],
+    queue: Annotated[JobQueue, Depends(get_queue)],
+    artifact_signer: Annotated[ArtifactURLSigner | None, Depends(get_artifact_signer)],
 ) -> CampaignService:
-    return CampaignService(repository, queue)
+    return CampaignService(repository, queue, artifact_signer)
 
 
 def correlation_id() -> UUID:

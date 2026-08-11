@@ -13,6 +13,7 @@ from .campaign_repository import CampaignRepository
 class InMemoryCampaignRepository(CampaignRepository):
     def __init__(self) -> None:
         self._records: dict[UUID, tuple[CampaignAggregateMetadata, CampaignVersion]] = {}
+        self._versions: dict[tuple[UUID, int], CampaignVersion] = {}
         self._events: dict[UUID, builtins.list[CampaignEvent]] = {}
         self._lock = asyncio.Lock()
         self.fail_writes = False
@@ -33,11 +34,16 @@ class InMemoryCampaignRepository(CampaignRepository):
             if version.campaign_version != 1 or version.campaign_id != aggregate.campaign_id:
                 raise RepositoryFailure("invalid initial version")
             self._records[aggregate.campaign_id] = (aggregate.model_copy(deep=True), version.model_copy(deep=True))
+            self._versions[(version.campaign_id, version.campaign_version)] = version.model_copy(deep=True)
             self._append_events(aggregate.campaign_id, events)
 
     async def get(self, campaign_id: UUID) -> tuple[CampaignAggregateMetadata, CampaignVersion] | None:
         record = self._records.get(campaign_id)
         return None if record is None else (record[0].model_copy(deep=True), record[1].model_copy(deep=True))
+
+    async def get_version(self, campaign_id: UUID, campaign_version: int) -> CampaignVersion | None:
+        version = self._versions.get((campaign_id, campaign_version))
+        return None if version is None else version.model_copy(deep=True)
 
     async def list(self, *, offset: int, limit: int) -> list[tuple[CampaignAggregateMetadata, CampaignVersion]]:
         records = sorted(self._records.values(), key=lambda x: (x[0].created_at, str(x[0].campaign_id)), reverse=True)[
@@ -57,6 +63,8 @@ class InMemoryCampaignRepository(CampaignRepository):
                 raise RepositoryFailure("immutable version mismatch")
             self._records[aggregate.campaign_id] = (aggregate.model_copy(deep=True), version.model_copy(deep=True))
 
+            self._versions[(version.campaign_id, version.campaign_version)] = version.model_copy(deep=True)
+
     async def approve(
         self,
         aggregate: CampaignAggregateMetadata,
@@ -74,6 +82,7 @@ class InMemoryCampaignRepository(CampaignRepository):
                 raise InvalidStateTransition("approval already recorded")
             self._records[aggregate.campaign_id] = (aggregate.model_copy(deep=True), version.model_copy(deep=True))
             self._append_events(aggregate.campaign_id, events)
+            self._versions[(version.campaign_id, version.campaign_version)] = version.model_copy(deep=True)
 
     async def cancel(
         self, aggregate: CampaignAggregateMetadata, version: CampaignVersion, events: builtins.list[CampaignEvent]
@@ -86,6 +95,7 @@ class InMemoryCampaignRepository(CampaignRepository):
                 raise RepositoryFailure("immutable version mismatch")
             self._records[aggregate.campaign_id] = (aggregate.model_copy(deep=True), version.model_copy(deep=True))
             self._append_events(aggregate.campaign_id, events)
+            self._versions[(version.campaign_id, version.campaign_version)] = version.model_copy(deep=True)
 
     async def retry(
         self, aggregate: CampaignAggregateMetadata, version: CampaignVersion, events: builtins.list[CampaignEvent]
@@ -98,6 +108,7 @@ class InMemoryCampaignRepository(CampaignRepository):
                 raise RepositoryFailure("immutable version mismatch")
             self._records[aggregate.campaign_id] = (aggregate.model_copy(deep=True), version.model_copy(deep=True))
             self._append_events(aggregate.campaign_id, events)
+            self._versions[(version.campaign_id, version.campaign_version)] = version.model_copy(deep=True)
 
     async def revise(
         self,
@@ -117,12 +128,21 @@ class InMemoryCampaignRepository(CampaignRepository):
                 child_version.model_copy(deep=True),
             )
             self._append_events(aggregate.campaign_id, events)
+            self._versions[(parent_version.campaign_id, parent_version.campaign_version)] = parent_version.model_copy(
+                deep=True
+            )
+            self._versions[(child_version.campaign_id, child_version.campaign_version)] = child_version.model_copy(
+                deep=True
+            )
 
     async def rollback_initial(self, campaign_id: UUID, events: builtins.list[CampaignEvent]) -> None:
         del events  # the bulk pop below already removes every event written for this campaign
         async with self._lock:
             self._records.pop(campaign_id, None)
             self._events.pop(campaign_id, None)
+
+            for key in [key for key in self._versions if key[0] == campaign_id]:
+                self._versions.pop(key, None)
 
     async def list_events(self, campaign_id: UUID, after_sequence: int, limit: int) -> builtins.list[CampaignEvent]:
         events = self._events.get(campaign_id, [])
@@ -140,3 +160,4 @@ class InMemoryCampaignRepository(CampaignRepository):
         async with self._lock:
             self._records.clear()
             self._events.clear()
+            self._versions.clear()

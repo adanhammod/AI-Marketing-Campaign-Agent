@@ -73,7 +73,7 @@ class StockImagePipeline:
             for scene in version.storyboard.scenes
         }
         if all(stored.values()):
-            return [self._reference(version, stored[n]) for n in (1, 2, 3) if stored[n] is not None]
+            return [self._reference(version, n, stored[n]) for n in (1, 2, 3) if stored[n] is not None]
 
         query_result = await self._query_generator.generate(version, is_cancelled)
         used_ids: set[int] = {
@@ -137,7 +137,7 @@ class StockImagePipeline:
             raise WorkflowOperationError(
                 "INVALID_PROVIDER_OUTPUT", "image acquisition did not produce three images", retryable=True
             )
-        return [self._reference(version, completed[n]) for n in (1, 2, 3) if completed[n] is not None]
+        return [self._reference(version, n, completed[n]) for n in (1, 2, 3) if completed[n] is not None]
 
     @staticmethod
     async def _checkpoint(is_cancelled: Callable[[], Awaitable[bool]], phase: str) -> None:
@@ -145,7 +145,7 @@ class StockImagePipeline:
             raise NodeCancelled(f"generate_images:{phase}")
 
     @staticmethod
-    def _reference(version: CampaignVersion, stored: object) -> ImageArtifactReference:
+    def _reference(version: CampaignVersion, scene_number: int, stored: object) -> ImageArtifactReference:
         from campaign_worker.storage.artifact_store import StoredImage
 
         assert isinstance(stored, StoredImage)
@@ -157,6 +157,8 @@ class StockImagePipeline:
             mime_type="image/jpeg",
             size_bytes=stored.size_bytes,
             checksum_sha256=stored.checksum_sha256,
+            scene_number=scene_number,
+            attribution=stored.attribution,
             created_at=stored.created_at,
             provider="pexels",
         )

@@ -45,7 +45,15 @@ Rules:
 - Presigned URLs are generated on demand. The URL is never stored; only response-time expiration may be returned. Persistent `presigned_url_expires_at` remains null.
 - An artifact record is immutable after acceptance. Replacement creates a new artifact ID.
 
-Public projection omits `s3_bucket`, `s3_key`, provider-private identifiers, and internal generation fields. It may add ephemeral `download_url` and `download_url_expires_at`.
+Public projection omits `s3_bucket`, `s3_key`, provider-private identifiers, and internal generation fields. Image
+projections may include `scene_number` and an optional attribution object containing only
+`provider_asset_id`, `creator_name`, `creator_profile_url`, `source_page_url`, `provider_url`, and
+`attribution_text`. Attribution URLs are HTTPS-only. These optional fields remain null for legacy artifacts.
+
+Campaign detail returns persisted public image references and an existing video reference without download URLs.
+The artifact endpoint may add fresh `download_url` and `download_url_expires_at` values. Image object keys are
+derived server-side from validated campaign, version, and scene identity; bucket/key are never accepted from the
+request or returned publicly. Signed URLs expire within 900 seconds and are never persisted.
 
 ## Sanitized Error
 

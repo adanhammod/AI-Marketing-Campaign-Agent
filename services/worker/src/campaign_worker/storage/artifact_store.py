@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from campaign_contracts.artifacts import ArtifactAttribution
 from campaign_contracts.campaign import CampaignVersion
 
 from campaign_worker.images.models import NormalizedImage
@@ -15,6 +16,7 @@ class StoredImage:
     size_bytes: int
     created_at: datetime
     pexels_photo_id: int | None = None
+    attribution: ArtifactAttribution | None = None
 
 
 class ArtifactStore(Protocol):

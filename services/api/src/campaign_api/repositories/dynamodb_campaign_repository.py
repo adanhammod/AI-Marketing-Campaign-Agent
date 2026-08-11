@@ -117,6 +117,12 @@ class DynamoDBCampaignRepository(CampaignRepository):
         version = CampaignVersion.model_validate(_model_payload(version_response, CampaignVersion))
         return aggregate, version
 
+    async def get_version(self, campaign_id: UUID, campaign_version: int) -> CampaignVersion | None:
+        response = await self._get_item(campaign_id, version_sk(campaign_version))
+        if not response:
+            return None
+        return CampaignVersion.model_validate(_model_payload(response, CampaignVersion))
+
     async def list(self, *, offset: int, limit: int) -> list[tuple[CampaignAggregateMetadata, CampaignVersion]]:
         try:
             response = await asyncio.to_thread(

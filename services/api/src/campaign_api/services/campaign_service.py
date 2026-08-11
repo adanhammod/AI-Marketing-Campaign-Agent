@@ -4,6 +4,7 @@ from uuid import UUID, uuid4, uuid5
 from campaign_contracts.api import (
     ApprovalRequest,
     ApprovalResponse,
+    CampaignArtifactsResponse,
     CampaignCreationAcceptedResponse,
     CampaignCreationRequest,
     CampaignDetailResponse,
@@ -17,6 +18,7 @@ from campaign_contracts.api import (
     RevisionRequest,
     RevisionResponse,
 )
+from campaign_contracts.artifacts import PublicArtifactReference
 from campaign_contracts.campaign import (
     ApprovalRecord,
     CampaignAggregateMetadata,
@@ -27,11 +29,12 @@ from campaign_contracts.campaign import (
     earliest_regeneration_step,
     validate_approval_target,
 )
-from campaign_contracts.enums import Actor, CampaignEventType, CampaignStatus, SQSOperation, WorkflowStep
+from campaign_contracts.enums import Actor, ArtifactType, CampaignEventType, CampaignStatus, SQSOperation, WorkflowStep
 from campaign_contracts.events import CampaignEvent
 from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.validation import is_terminal, validate_transition
 
+from campaign_api.artifacts.artifact_url_signer import ArtifactURLSigner
 from campaign_api.exceptions import (
     CampaignNotFound,
     DuplicateCampaign,
@@ -40,6 +43,7 @@ from campaign_api.exceptions import (
     InvalidStateTransition,
     QueueSubmissionAmbiguousFailure,
     QueueSubmissionFailure,
+    RepositoryFailure,
 )
 from campaign_api.queue.job_queue import JobQueue
 from campaign_api.repositories.campaign_repository import CampaignRepository
@@ -77,9 +81,16 @@ _REVISION_PROGRESS_FLOOR: dict[WorkflowStep, int] = {
 
 
 class CampaignService:
-    def __init__(self, repository: CampaignRepository, queue: JobQueue) -> None:
+    def __init__(
+        self,
+        repository: CampaignRepository,
+        queue: JobQueue,
+        artifact_signer: ArtifactURLSigner | None = None,
+    ) -> None:
         self.repository = repository
         self.queue = queue
+
+        self.artifact_signer = artifact_signer
 
     async def create(
         self, request: CampaignCreationRequest, correlation_id: UUID, idempotency_key: str
@@ -643,7 +654,7 @@ class CampaignService:
             strategy=v.strategy,
             copy=v.campaign_copy,
             storyboard=v.storyboard,
-            artifacts=[],
+            artifacts=[*v.image_artifacts, *([v.video_artifact] if v.video_artifact is not None else [])],
             revision=v.revision,
             approval=v.approval,
             completed_steps=v.completed_steps,
@@ -665,6 +676,50 @@ class CampaignService:
         if record is None:
             raise CampaignNotFound("campaign not found")
         return self.detail(*record)
+
+    async def artifacts(
+        self,
+        campaign_id: UUID,
+        campaign_version: int | None,
+        artifact_type: ArtifactType | None,
+    ) -> CampaignArtifactsResponse:
+        record = await self.repository.get(campaign_id)
+        if record is None:
+            raise CampaignNotFound("campaign not found")
+        aggregate, current = record
+        if campaign_version is None or campaign_version == aggregate.current_version:
+            version = current
+        else:
+            historical_version = await self.repository.get_version(campaign_id, campaign_version)
+            if historical_version is None:
+                raise CampaignNotFound("campaign version not found")
+            version = historical_version
+
+        stored = [*version.image_artifacts, *([version.video_artifact] if version.video_artifact is not None else [])]
+        if artifact_type is not None:
+            stored = [artifact for artifact in stored if artifact.artifact_type == artifact_type]
+
+        items: list[PublicArtifactReference] = []
+        for artifact in stored:
+            values = artifact.model_dump(mode="python")
+            if artifact.artifact_type == ArtifactType.IMAGE and artifact.scene_number is not None:
+                if self.artifact_signer is None:
+                    raise RepositoryFailure("artifact download service unavailable")
+                try:
+                    download_url, expires_at = await self.artifact_signer.sign_image(
+                        campaign_id,
+                        version.campaign_version,
+                        artifact.scene_number,
+                    )
+                except Exception:
+                    raise RepositoryFailure("artifact access temporarily unavailable") from None
+                values.update(download_url=download_url, download_url_expires_at=expires_at)
+            items.append(PublicArtifactReference.model_validate(values))
+        return CampaignArtifactsResponse(
+            campaign_id=campaign_id,
+            campaign_version=version.campaign_version,
+            items=items,
+        )
 
     async def list(self, offset: int, limit: int) -> CampaignListResponse:
         records = await self.repository.list(offset=offset, limit=limit + 1)

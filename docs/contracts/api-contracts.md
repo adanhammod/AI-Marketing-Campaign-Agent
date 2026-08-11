@@ -138,15 +138,27 @@ Success `200`:
       "size_bytes": 12345,
       "checksum_sha256": "64 lowercase hex",
       "created_at": "ISO-8601",
-      "provider": "gemini",
-      "download_url": "short-lived URL",
+      "provider": "pexels",
+      "scene_number": 1,
+      "attribution": {
+        "provider_asset_id": "123456",
+        "creator_name": "Photographer Name",
+        "creator_profile_url": "https://www.pexels.com/@photographer/",
+        "source_page_url": "https://www.pexels.com/photo/123456/",
+        "provider_url": "https://www.pexels.com/",
+        "attribution_text": "Photo by Photographer Name on Pexels"
+      },
+      "download_url": "https://short-lived-signed-url",
       "download_url_expires_at": "ISO-8601"
     }
   ]
 }
 ```
 
-Presigned URLs are generated on demand and never persisted. Unknown campaign/version: `404`; unsupported type: `422`.
+Presigned image URLs are generated on demand, expire within 900 seconds, and are never persisted. The API derives
+the private object identity from campaign/version/scene and never exposes S3 bucket or key. Existing video
+references are included but are not assigned an image-derived URL. Legacy artifacts without scene or attribution
+remain valid with null optional fields. Unknown campaign/version: `404`; unsupported type: `422`.
 
 ## `POST /campaigns/{campaign_id}/versions/{version}/approve`
 

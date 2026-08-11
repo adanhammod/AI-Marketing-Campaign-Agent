@@ -212,6 +212,9 @@ def test_s3_keys_metadata_artifact_ids_and_retry_reconciliation():
         "storyboard_fingerprint": campaign_storyboard_fingerprint(version),
         "normalized_checksum": image.checksum_sha256,
         "pexels_photo_id": 7,
+        "photographer_name": "Creator",
+        "photographer_profile_url": "https://www.pexels.com/@creator",
+        "pexels_photo_page_url": "https://www.pexels.com/photo/example-7/",
     }
     stored = store.put(version, 1, image, metadata)
     assert stored.artifact_id == deterministic_artifact_id(version.campaign_id, 2, 1)
@@ -244,6 +247,10 @@ class _Photos:
                 width=1200,
                 height=2000,
                 source_url=f"https://x/{query[-1]}{suffix}",
+                photo_page_url=f"https://www.pexels.com/photo/example-{query[-1]}{suffix}/",
+                photographer="Creator",
+                photographer_url="https://www.pexels.com/@creator",
+                photographer_id=9,
             )
             for suffix in (1, 2)
         ]
@@ -269,6 +276,7 @@ class _Store:
             len(image.data),
             datetime.now(UTC),
             int(metadata["pexels_photo_id"]),
+            S3ArtifactStore._attribution(metadata),
         )
         self.saved[scene_number] = stored
         return stored
@@ -286,6 +294,19 @@ async def test_pipeline_candidate_fallback_partial_visibility_exactly_three_and_
     assert len(store.saved) == 3
     second = await pipeline.acquire(version, _false)
     assert second == result
+
+    assert [artifact.scene_number for artifact in result] == [1, 2, 3]
+    assert all(artifact.provider == "pexels" for artifact in result)
+    assert [artifact.attribution.provider_asset_id for artifact in result if artifact.attribution] == [
+        "12",
+        "22",
+        "32",
+    ]
+    assert all(
+        artifact.attribution.attribution_text == "Photo by Creator on Pexels"
+        for artifact in result
+        if artifact.attribution
+    )
 
     assert photos.search_calls == 3
 
