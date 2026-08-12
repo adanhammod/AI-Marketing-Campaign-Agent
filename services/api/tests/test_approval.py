@@ -18,6 +18,17 @@ def _approve(client, campaign_id, version, checksum, headers, note=None):
     )
 
 
+def test_campaign_detail_exposes_the_review_manifest_checksum_needed_to_approve(
+    client, ready_for_review_campaign, approval_checksum
+):
+    campaign_id, _ = asyncio.run(ready_for_review_campaign())
+
+    response = client.get(f"/api/v1/campaigns/{campaign_id}")
+
+    assert response.status_code == 200
+    assert response.json()["review_manifest_checksum"] == approval_checksum
+
+
 def test_approve_returns_202_and_transitions_to_approved(
     client, repository, queue, ready_for_review_campaign, approval_checksum, headers
 ):

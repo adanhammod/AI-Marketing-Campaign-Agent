@@ -8,6 +8,7 @@ from campaign_contracts.campaign import CampaignVersion
 
 from campaign_worker.audio.models import NormalizedAudio
 from campaign_worker.images.models import NormalizedImage
+from campaign_worker.package.models import BuiltPackage
 from campaign_worker.video.models import RenderedVideo
 
 
@@ -31,6 +32,14 @@ class StoredAudio:
 
 @dataclass(frozen=True, slots=True)
 class StoredVideo:
+    artifact_id: UUID
+    checksum_sha256: str
+    size_bytes: int
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StoredPackage:
     artifact_id: UUID
     checksum_sha256: str
     size_bytes: int
@@ -69,3 +78,14 @@ class VideoArtifactStore(Protocol):
         video: RenderedVideo,
         metadata: dict[str, object],
     ) -> StoredVideo: ...
+
+
+class PackageArtifactStore(Protocol):
+    def reconcile_package(self, version: CampaignVersion, fingerprint: str) -> StoredPackage | None: ...
+
+    def put_package(
+        self,
+        version: CampaignVersion,
+        package: BuiltPackage,
+        metadata: dict[str, object],
+    ) -> StoredPackage: ...

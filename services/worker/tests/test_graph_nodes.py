@@ -741,9 +741,26 @@ async def test_await_human_approval_preserves_all_other_version_fields():
 
     result = await nodes.await_human_approval(state)
 
-    before = state["version"].model_dump(exclude={"status"})
-    after = result["version"].model_dump(exclude={"status"})
+    before = state["version"].model_dump(exclude={"status", "review_package"})
+    after = result["version"].model_dump(exclude={"status", "review_package"})
     assert before == after
+
+
+@pytest.mark.asyncio
+async def test_await_human_approval_sets_a_deterministic_review_package():
+    state = await _state_with_valid_review_package()
+
+    first = await nodes.await_human_approval(state)
+    second = await nodes.await_human_approval(state)
+
+    assert first["version"].review_package is not None
+    assert first["version"].review_package == second["version"].review_package
+    expected_ids = {artifact.artifact_id for artifact in state["version"].image_artifacts}
+    expected_ids.add(state["version"].video_artifact.artifact_id)
+    assert set(first["version"].review_package.artifact_ids) == expected_ids
+    assert first["version"].review_package.artifact_id == nodes.deterministic_review_package_artifact_id(
+        state["version"].campaign_id, state["version"].campaign_version
+    )
 
 
 async def _final_version() -> CampaignVersion:
@@ -753,65 +770,100 @@ async def _final_version() -> CampaignVersion:
     return rendered["version"]
 
 
+async def _final_version_with_review_package() -> CampaignVersion:
+    version = await _final_version()
+    validated = await nodes.validate_review_package({"version": version})
+    approved = await nodes.await_human_approval(validated)
+    return approved["version"]
+
+
+async def _never_cancelled() -> bool:
+    return False
+
+
+class _RecordingPackagePipeline:
+    def __init__(self) -> None:
+        self.calls: list[CampaignVersion] = []
+
+    async def acquire(self, version: CampaignVersion, is_cancelled):
+        self.calls.append(version)
+        from campaign_contracts.artifacts import FinalPackageArtifactReference
+
+        return FinalPackageArtifactReference(
+            artifact_id=uuid4(),
+            campaign_id=version.campaign_id,
+            campaign_version=version.campaign_version,
+            workflow_step=WorkflowStep.PACKAGE,
+            mime_type="application/zip",
+            size_bytes=1024,
+            checksum_sha256="c" * 64,
+            created_at=datetime.now(UTC),
+            provider="test-package-pipeline",
+        )
+
+
 @pytest.mark.asyncio
 async def test_prepare_final_package_requires_strategy_copy_and_storyboard():
     state: GraphState = {"version": _version()}
+    node = nodes.make_prepare_final_package_node(_RecordingPackagePipeline(), _never_cancelled)
     with pytest.raises(ValueError, match="strategy"):
-        await nodes.prepare_final_package(state)
+        await node(state)
 
 
 @pytest.mark.asyncio
 async def test_prepare_final_package_requires_prior_generate_images():
     version = await _version_with_storyboard()
+    node = nodes.make_prepare_final_package_node(_RecordingPackagePipeline(), _never_cancelled)
     with pytest.raises(ValueError, match="generate_images"):
-        await nodes.prepare_final_package({"version": version})
+        await node({"version": version})
 
 
 @pytest.mark.asyncio
 async def test_prepare_final_package_requires_prior_render_video():
     version = await _version_with_storyboard()
     images_result = await nodes.make_generate_images_node(MockImageProvider())({"version": version})
+    node = nodes.make_prepare_final_package_node(_RecordingPackagePipeline(), _never_cancelled)
     with pytest.raises(ValueError, match="render_video"):
-        await nodes.prepare_final_package({"version": images_result["version"]})
+        await node({"version": images_result["version"]})
+
+
+@pytest.mark.asyncio
+async def test_prepare_final_package_requires_a_review_package_established_before_approval():
+    version = await _final_version()
+    node = nodes.make_prepare_final_package_node(_RecordingPackagePipeline(), _never_cancelled)
+    with pytest.raises(ValueError, match="review package"):
+        await node({"version": version})
 
 
 @pytest.mark.asyncio
 async def test_prepare_final_package_sets_status_final():
-    version = await _final_version()
+    version = await _final_version_with_review_package()
+    node = nodes.make_prepare_final_package_node(_RecordingPackagePipeline(), _never_cancelled)
 
-    result = await nodes.prepare_final_package({"version": version})
+    result = await node({"version": version})
 
     assert result["version"].status == CampaignStatus.FINAL
 
 
 @pytest.mark.asyncio
-async def test_prepare_final_package_builds_review_package_with_all_artifact_ids():
-    version = await _final_version()
+async def test_prepare_final_package_persists_the_package_artifact_from_the_pipeline():
+    version = await _final_version_with_review_package()
+    pipeline = _RecordingPackagePipeline()
+    node = nodes.make_prepare_final_package_node(pipeline, _never_cancelled)
 
-    result = await nodes.prepare_final_package({"version": version})
+    result = await node({"version": version})
 
-    review_package = result["version"].review_package
-    assert review_package is not None
-    expected_ids = {artifact.artifact_id for artifact in version.image_artifacts}
-    expected_ids.add(version.video_artifact.artifact_id)
-    assert set(review_package.artifact_ids) == expected_ids
-
-
-@pytest.mark.asyncio
-async def test_prepare_final_package_manifest_checksum_is_deterministic():
-    version = await _final_version()
-
-    first = await nodes.prepare_final_package({"version": version})
-    second = await nodes.prepare_final_package({"version": version})
-
-    assert first["version"].review_package.manifest_checksum == second["version"].review_package.manifest_checksum
+    assert pipeline.calls == [version]
+    assert result["version"].package_artifact is not None
+    assert result["version"].package_artifact.checksum_sha256 == "c" * 64
 
 
 @pytest.mark.asyncio
 async def test_prepare_final_package_does_not_regenerate_any_artifacts():
-    version = await _final_version()
+    version = await _final_version_with_review_package()
+    node = nodes.make_prepare_final_package_node(_RecordingPackagePipeline(), _never_cancelled)
 
-    result = await nodes.prepare_final_package({"version": version})
+    result = await node({"version": version})
 
     assert result["version"].image_artifacts == version.image_artifacts
     assert result["version"].video_artifact == version.video_artifact

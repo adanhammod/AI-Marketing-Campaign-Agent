@@ -1,10 +1,11 @@
 import hashlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from campaign_contracts.campaign import (
     CampaignCopy,
+    CampaignVersion,
     ChannelCopy,
     ImagePrompt,
     ReviewPackage,
@@ -18,6 +19,7 @@ from campaign_contracts.errors import SanitizedWorkflowError
 from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.images.pipeline import ImageAssetPipeline
+from campaign_worker.package.pipeline import PackageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.models import ImageGenerationRequest, VideoRenderRequest
 from campaign_worker.providers.voice_models import VoiceGenerationRequest
@@ -216,6 +218,27 @@ async def validate_review_package(state: GraphState) -> GraphState:
     return {**state, "review_validation": validation}
 
 
+def deterministic_review_package_artifact_id(campaign_id: UUID, campaign_version: int) -> UUID:
+    return uuid5(campaign_id, f"version:{campaign_version}:review_package")
+
+
+def _build_review_package(version: CampaignVersion) -> ReviewPackage:
+    # Deterministic given the same persisted artifact IDs: safe to recompute on SQS
+    # redelivery of an already-READY_FOR_REVIEW version without violating immutability.
+    artifact_ids = [artifact.artifact_id for artifact in version.image_artifacts]
+    if version.video_artifact is not None:
+        artifact_ids.append(version.video_artifact.artifact_id)
+    signature = f"{version.campaign_id}:{version.campaign_version}:" + ":".join(
+        sorted(str(artifact_id) for artifact_id in artifact_ids)
+    )
+    manifest_checksum = hashlib.sha256(signature.encode()).hexdigest()
+    return ReviewPackage(
+        artifact_id=deterministic_review_package_artifact_id(version.campaign_id, version.campaign_version),
+        manifest_checksum=manifest_checksum,
+        artifact_ids=artifact_ids,
+    )
+
+
 async def await_human_approval(state: GraphState) -> GraphState:
     validation = state.get("review_validation")
     if validation is None:
@@ -223,28 +246,34 @@ async def await_human_approval(state: GraphState) -> GraphState:
     if not validation.is_valid:
         raise ValueError(f"cannot await human approval: review package incomplete: {validation.missing_artifacts}")
     version = state["version"]
-    return {**state, "version": version.model_copy(update={"status": CampaignStatus.READY_FOR_REVIEW})}
-
-
-async def prepare_final_package(state: GraphState) -> GraphState:
-    version = state["version"]
-    if version.strategy is None or version.campaign_copy is None or version.storyboard is None:
-        raise ValueError("prepare_final_package requires strategy, campaign_copy, and storyboard to be present")
-    if not version.image_artifacts:
-        raise ValueError("prepare_final_package requires generate_images to have run first")
-    if version.video_artifact is None:
-        raise ValueError("prepare_final_package requires render_video to have run first")
-
-    artifact_ids = [artifact.artifact_id for artifact in version.image_artifacts]
-    artifact_ids.append(version.video_artifact.artifact_id)
-    signature = f"{version.campaign_id}:{version.campaign_version}:" + ":".join(
-        sorted(str(artifact_id) for artifact_id in artifact_ids)
+    review_package = _build_review_package(version)
+    updated_version = version.model_copy(
+        update={"status": CampaignStatus.READY_FOR_REVIEW, "review_package": review_package}
     )
-    manifest_checksum = hashlib.sha256(signature.encode()).hexdigest()
-    review_package = ReviewPackage(artifact_id=uuid4(), manifest_checksum=manifest_checksum, artifact_ids=artifact_ids)
-
-    updated_version = version.model_copy(update={"review_package": review_package, "status": CampaignStatus.FINAL})
     return {**state, "version": updated_version}
+
+
+def make_prepare_final_package_node(
+    package_pipeline: PackageAssetPipeline, is_cancelled: Callable[[], Awaitable[bool]]
+) -> NodeFn:
+    async def prepare_final_package(state: GraphState) -> GraphState:
+        version = state["version"]
+        if version.strategy is None or version.campaign_copy is None or version.storyboard is None:
+            raise ValueError("prepare_final_package requires strategy, campaign_copy, and storyboard to be present")
+        if not version.image_artifacts:
+            raise ValueError("prepare_final_package requires generate_images to have run first")
+        if version.video_artifact is None:
+            raise ValueError("prepare_final_package requires render_video to have run first")
+        if version.review_package is None:
+            raise ValueError("prepare_final_package requires a review package established prior to approval")
+
+        package_artifact = await package_pipeline.acquire(version, is_cancelled)
+        updated_version = version.model_copy(
+            update={"package_artifact": package_artifact, "status": CampaignStatus.FINAL}
+        )
+        return {**state, "version": updated_version}
+
+    return prepare_final_package
 
 
 async def handle_failure(state: GraphState, error: BaseException, *, step: WorkflowStep | None = None) -> GraphState:

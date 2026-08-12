@@ -44,7 +44,9 @@ Common behavior: malformed JSON `400`; schema errors `422`; unknown campaign `40
 
 ### Campaign Detail
 
-Extends summary with normalized `brief`, `constraints`, exact current `version`, nullable `strategy`, `copy`, `storyboard`, public artifact summaries, safe `revision`, safe `approval`, `completed_steps`, `retry_eligible`, sanitized `error`, `event_sequence`, and action links. It never contains S3 bucket/key, lease data, receipt handles, raw provider responses, full private prompt history, or stored presigned URLs.
+Extends summary with normalized `brief`, `constraints`, exact current `version`, nullable `strategy`, `copy`, `storyboard`, public artifact summaries, safe `revision`, safe `approval`, `completed_steps`, `retry_eligible`, sanitized `error`, `event_sequence`, a nullable `review_manifest_checksum`, and action links. It never contains S3 bucket/key, lease data, receipt handles, raw provider responses, full private prompt history, or stored presigned URLs.
+
+`review_manifest_checksum` is the exact value the client must echo back as `ApprovalRequest.review_manifest_checksum` to approve the version. It is populated deterministically (given the same persisted image/video artifact IDs) once the version reaches `READY_FOR_REVIEW`, and is `null` beforehand.
 
 ## `POST /campaigns`
 
@@ -155,12 +157,18 @@ Success `200`:
 }
 ```
 
-Presigned image, audio, and video URLs are generated on demand, expire within 900 seconds, and are never persisted.
-The API derives the private object identity from campaign/version (plus scene, for images) and never exposes S3
-bucket or key. The voiceover artifact (`artifact_type: "AUDIO"`) and the rendered campaign video
+Presigned image, audio, video, and final-package URLs are generated on demand, expire within 900 seconds, and are
+never persisted. The API derives the private object identity from campaign/version (plus scene, for images) and
+never exposes S3 bucket or key. The voiceover artifact (`artifact_type: "AUDIO"`) and the rendered campaign video
 (`artifact_type: "VIDEO"`) are signed the same way but carry no `scene_number` or `attribution`. Legacy artifacts
 without scene or attribution remain valid with null optional fields. Unknown campaign/version: `404`; unsupported
 type: `422`.
+
+Once a version reaches `FINAL`, its download archive is also exposed as an artifact with
+`artifact_type: "FINAL_PACKAGE"`, `mime_type: "application/zip"`, and no `scene_number`/`attribution`, signed the
+same way as the other artifact types. The archive itself (`campaign-v{version}/strategy.json`, `copy.json`,
+`storyboard.json`, `images/scene-{1,2,3}.jpg`, `audio/voiceover.mp3`, `video/final.mp4`, `manifest.json`) is built
+and stored by the worker as part of the `RESUME` → `PACKAGE` step, before the version transitions to `FINAL`.
 
 ## `POST /campaigns/{campaign_id}/versions/{version}/approve`
 
@@ -227,6 +235,10 @@ Success `202`:
 ```
 
 Unknown: `404`; non-retryable/exhausted/stale/active: `409`; rate-limited user retry: `429`.
+
+The queued SQS operation depends on which step is being resumed: `resume_step: "package"` (a failure during
+finalization, after approval) re-queues `RESUME` so only `prepare_final_package` re-runs; every other `resume_step`
+re-queues `START`, same as before.
 
 ## `POST /campaigns/{campaign_id}/versions/{version}/cancel`
 

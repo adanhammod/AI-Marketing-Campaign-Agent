@@ -981,6 +981,19 @@
       "title": "Retry Eligible",
       "type": "boolean"
     },
+    "review_manifest_checksum": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Manifest Checksum"
+    },
     "revision": {
       "anyOf": [
         {

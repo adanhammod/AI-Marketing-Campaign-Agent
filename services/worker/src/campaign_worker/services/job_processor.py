@@ -27,7 +27,9 @@ from campaign_worker.graph.boundary import NodeFailure
 from campaign_worker.graph.executor import _CompiledGraph, build_resume_graph, build_start_graph
 from campaign_worker.graph.state import GraphState
 from campaign_worker.images.pipeline import ImageAssetPipeline
+from campaign_worker.package.pipeline import PackageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
+from campaign_worker.providers.mock_package_pipeline import MockPackagePipeline
 from campaign_worker.repositories.workflow_repository import LeaseContext, WorkflowRepository
 from campaign_worker.video.pipeline import VideoAssetPipeline
 
@@ -83,12 +85,14 @@ class GraphJobProcessor(JobProcessor):
         voice_provider: VoiceProvider | VoiceAssetPipeline,
         video_provider: VideoProvider | VideoAssetPipeline,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
+        package_pipeline: PackageAssetPipeline | None = None,
     ) -> None:
         self._repository = repository
         self._image_provider = image_provider
         self._voice_provider = voice_provider
         self._video_provider = video_provider
         self._is_cancelled = is_cancelled or _never_cancelled
+        self._package_pipeline = package_pipeline or MockPackagePipeline()
 
     async def process(self, message: SQSJobMessage, version: CampaignVersion, lease: LeaseContext) -> ProcessingResult:
         if message.operation == SQSOperation.REGENERATE:
@@ -160,7 +164,7 @@ class GraphJobProcessor(JobProcessor):
                 self._voice_provider,
                 self._video_provider,
             )
-        return build_resume_graph(self._is_cancelled)
+        return build_resume_graph(self._repository, self._is_cancelled, self._package_pipeline)
 
     async def _seed_reused_steps(self, version: CampaignVersion, message: SQSJobMessage) -> None:
         requested_step = message.requested_step

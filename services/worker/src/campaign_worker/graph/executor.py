@@ -8,6 +8,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.images.pipeline import ImageAssetPipeline
+from campaign_worker.package.pipeline import PackageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 from campaign_worker.video.pipeline import VideoAssetPipeline
@@ -127,12 +128,21 @@ def build_start_graph(
     )
 
 
-def build_resume_graph(is_cancelled: Callable[[], Awaitable[bool]]) -> _CompiledGraph:
+def build_resume_graph(
+    repository: WorkflowRepository,
+    is_cancelled: Callable[[], Awaitable[bool]],
+    package_pipeline: PackageAssetPipeline,
+) -> _CompiledGraph:
     def cancellable(name: str, fn: NodeFn) -> NodeFn:
         return with_cancellation_check(is_cancelled, name)(fn)
 
+    def tracked_step(name: str, step: WorkflowStep, fn: NodeFn) -> NodeFn:
+        return with_failure_attribution(step)(cancellable(name, with_step_tracking(step, repository)(fn)))
+
+    package_node = _nodes.make_prepare_final_package_node(package_pipeline, is_cancelled)
+
     return build_graph(
-        nodes={"prepare_final_package": cancellable("prepare_final_package", _nodes.prepare_final_package)},
+        nodes={"prepare_final_package": tracked_step("prepare_final_package", WorkflowStep.PACKAGE, package_node)},
         edges=[("prepare_final_package",)],
     )
 

@@ -56,11 +56,23 @@ the worker (FFmpeg) from the campaign's own image and voiceover artifacts, not s
 Video-technical metadata (resolution, duration, codecs, fps, render fingerprint) is recorded only in the private S3
 metadata sidecar, never on the public artifact.
 
-Campaign detail returns persisted public image, voiceover, and video references, all without download URLs. The
-artifact endpoint may add fresh `download_url` and `download_url_expires_at` values for images, audio, and video.
-Image object keys are derived server-side from validated campaign, version, and scene identity; the audio and video
-object keys are derived from campaign and version identity alone. Bucket/key are never accepted from the request or
-returned publicly. Signed URLs expire within 900 seconds and are never persisted.
+The final downloadable archive (`artifact_type: "FINAL_PACKAGE"`, `workflow_step: "package"`, `mime_type:
+"application/zip"`) is likewise never attributed and carries no `scene_number` -- it is assembled locally by the
+worker's `python-zipfile`-based builder from the campaign's own already-generated strategy, copy, storyboard,
+images, voiceover, and video, not sourced from an external provider. Its artifact ID is deterministic
+(`uuid5(campaign_id, f"version:{campaign_version}:package")`), matching the convention used for every other
+artifact type. Every member path inside the archive is a fixed literal derived only from the campaign version
+number (`campaign-v{version}/...`) -- never from user-supplied text -- so path traversal ("zip-slip") is
+structurally impossible. The archive's `manifest.json` entry contains only already-public artifact metadata
+(checksums, providers, attribution text, approval id/timestamp); it never contains S3 bucket/key, credentials, or
+raw provider payloads.
+
+Campaign detail returns persisted public image, voiceover, video, and (once `FINAL`) final-package references, all
+without download URLs. The artifact endpoint may add fresh `download_url` and `download_url_expires_at` values for
+images, audio, video, and the final package. Image object keys are derived server-side from validated campaign,
+version, and scene identity; the audio, video, and package object keys are derived from campaign and version
+identity alone. Bucket/key are never accepted from the request or returned publicly. Signed URLs expire within 900
+seconds and are never persisted.
 
 ## Sanitized Error
 

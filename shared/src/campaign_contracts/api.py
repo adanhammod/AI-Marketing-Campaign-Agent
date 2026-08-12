@@ -11,7 +11,7 @@ class CampaignCreationRequest(NormalizedCampaignBrief): pass
 class CampaignCreationAcceptedResponse(UTCModel): campaign_id:UUID; campaign_version:int=Field(ge=1); job_id:UUID; status:CampaignStatus; progress_percent:int=Field(ge=0,le=100); links:dict[str,str]
 class CampaignSummary(UTCModel): campaign_id:UUID; title:str; current_version:int=Field(ge=1); latest_final_version:int|None=Field(default=None,ge=1); status:CampaignStatus; current_step:WorkflowStep|None=None; progress_percent:int=Field(ge=0,le=100); created_at:datetime; updated_at:datetime
 class CampaignListResponse(UTCModel): items:list[CampaignSummary]; next_cursor:str|None=None
-class CampaignDetailResponse(PublicCampaignVersion): title:str; current_version:int=Field(ge=1); latest_final_version:int|None=Field(default=None,ge=1); event_sequence:int=Field(ge=0); actions:dict[str,str]=Field(default_factory=dict)
+class CampaignDetailResponse(PublicCampaignVersion): title:str; current_version:int=Field(ge=1); latest_final_version:int|None=Field(default=None,ge=1); event_sequence:int=Field(ge=0); review_manifest_checksum:str|None=Field(default=None,pattern=r"^[0-9a-f]{64}$"); actions:dict[str,str]=Field(default_factory=dict)
 class CampaignEventsResponse(UTCModel): campaign_id:UUID; campaign_version:int=Field(ge=1); items:list[CampaignEvent]; next_cursor:str|None=None; latest_sequence:int=Field(ge=0); terminal:bool
 class CampaignArtifactsResponse(UTCModel): campaign_id:UUID; campaign_version:int=Field(ge=1); items:list[PublicArtifactReference]
 class ApprovalRequest(UTCModel): review_manifest_checksum:str=Field(pattern=r"^[0-9a-f]{64}$"); note:str|None=Field(default=None,max_length=500)

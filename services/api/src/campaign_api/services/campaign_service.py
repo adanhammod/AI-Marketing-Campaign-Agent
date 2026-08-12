@@ -471,12 +471,17 @@ class CampaignService:
         if resume_step is None:
             raise InvalidStateTransition("failed campaign is missing a resume step")
 
+        # A PACKAGE-step failure happened inside the RESUME graph (prepare_final_package),
+        # which build_start_graph does not contain -- resubmitting START would silently
+        # re-run generation and land back at READY_FOR_REVIEW instead of resuming
+        # finalization, so route that one case back through RESUME instead.
+        operation = SQSOperation.RESUME if resume_step == WorkflowStep.PACKAGE else SQSOperation.START
         message = SQSJobMessage(
             schema_version=1,
             job_id=current.job_id,
             campaign_id=current.campaign_id,
             campaign_version=current.campaign_version,
-            operation=SQSOperation.START,
+            operation=operation,
             requested_step=None,
             revision_scope=None,
             idempotency_key=str(current.job_id),
@@ -570,6 +575,7 @@ class CampaignService:
             voice_artifact=current.voice_artifact if reuse_voice else None,
             video_artifact=None,
             review_package=None,
+            package_artifact=None,
             revision=expected_feedback,
             approval=None,
             completed_steps=list(reused_steps),
@@ -662,6 +668,7 @@ class CampaignService:
                 *v.image_artifacts,
                 *([v.voice_artifact] if v.voice_artifact is not None else []),
                 *([v.video_artifact] if v.video_artifact is not None else []),
+                *([v.package_artifact] if v.package_artifact is not None else []),
             ],
             revision=v.revision,
             approval=v.approval,
@@ -676,6 +683,7 @@ class CampaignService:
             current_version=a.current_version,
             latest_final_version=a.latest_final_version,
             event_sequence=a.event_sequence,
+            review_manifest_checksum=v.review_package.manifest_checksum if v.review_package is not None else None,
             actions={},
         )
 
@@ -707,6 +715,7 @@ class CampaignService:
             *version.image_artifacts,
             *([version.voice_artifact] if version.voice_artifact is not None else []),
             *([version.video_artifact] if version.video_artifact is not None else []),
+            *([version.package_artifact] if version.package_artifact is not None else []),
         ]
         if artifact_type is not None:
             stored = [artifact for artifact in stored if artifact.artifact_type == artifact_type]
@@ -742,6 +751,17 @@ class CampaignService:
                     raise RepositoryFailure("artifact download service unavailable")
                 try:
                     download_url, expires_at = await self.artifact_signer.sign_video(
+                        campaign_id,
+                        version.campaign_version,
+                    )
+                except Exception:
+                    raise RepositoryFailure("artifact access temporarily unavailable") from None
+                values.update(download_url=download_url, download_url_expires_at=expires_at)
+            elif artifact.artifact_type == ArtifactType.FINAL_PACKAGE:
+                if self.artifact_signer is None:
+                    raise RepositoryFailure("artifact download service unavailable")
+                try:
+                    download_url, expires_at = await self.artifact_signer.sign_package(
                         campaign_id,
                         version.campaign_version,
                     )

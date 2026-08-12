@@ -16,6 +16,7 @@ from campaign_worker.graph.executor import (
 )
 from campaign_worker.graph.state import GraphState
 from campaign_worker.providers.mock_image_provider import MockImageProvider
+from campaign_worker.providers.mock_package_pipeline import MockPackagePipeline
 from campaign_worker.providers.mock_video_provider import MockVideoProvider
 from campaign_worker.providers.mock_voice_provider import MockVoiceProvider
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
@@ -330,14 +331,37 @@ async def test_resume_graph_runs_prepare_final_package_only():
         ).run(_version())
     ).model_copy(update={"status": CampaignStatus.APPROVED})
 
-    graph = build_resume_graph(_never_cancelled)
+    graph = build_resume_graph(_InMemoryStepRepository(), _never_cancelled, MockPackagePipeline())
     result = await GraphExecutor(graph).run(version)
 
     assert result.status == CampaignStatus.FINAL
     assert result.review_package is not None
+    assert result.package_artifact is not None
+
+
+@pytest.mark.asyncio
+async def test_resume_graph_tracks_the_package_step():
+    repository = _InMemoryStepRepository()
+    version = (
+        await GraphExecutor(
+            build_start_graph(
+                _InMemoryStepRepository(),
+                _never_cancelled,
+                MockImageProvider(),
+                MockVoiceProvider(),
+                MockVideoProvider(),
+            )
+        ).run(_version())
+    ).model_copy(update={"status": CampaignStatus.APPROVED})
+
+    graph = build_resume_graph(repository, _never_cancelled, MockPackagePipeline())
+    await GraphExecutor(graph).run(version)
+
+    record = repository.steps[(version.campaign_id, version.campaign_version, WorkflowStep.PACKAGE)]
+    assert record.status == StepStatus.SUCCEEDED
 
 
 @pytest.mark.asyncio
 async def test_resume_graph_uses_no_checkpointer():
-    graph = build_resume_graph(_never_cancelled)
+    graph = build_resume_graph(_InMemoryStepRepository(), _never_cancelled, MockPackagePipeline())
     assert graph.checkpointer is None

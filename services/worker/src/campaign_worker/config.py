@@ -21,6 +21,7 @@ class Settings:
     ffprobe_path: str = "ffprobe"
     video_render_timeout_seconds: float = 60
     video_max_download_bytes: int = 50_000_000
+    package_max_bytes: int = 52_428_800
     table_name: str | None = None
     wait_time_seconds: int = 20
     batch_size: int = 1
@@ -91,6 +92,7 @@ class Settings:
             ffprobe_path=os.getenv("FFPROBE_PATH", "ffprobe"),
             video_render_timeout_seconds=float(os.getenv("VIDEO_RENDER_TIMEOUT_SECONDS", "60")),
             video_max_download_bytes=int(os.getenv("VIDEO_MAX_DOWNLOAD_BYTES", "50000000")),
+            package_max_bytes=int(os.getenv("PACKAGE_MAX_BYTES", "52428800")),
             wait_time_seconds=int(os.getenv("SQS_WAIT_TIME_SECONDS", "20")),
             batch_size=int(os.getenv("SQS_BATCH_SIZE", "1")),
             visibility_timeout_seconds=int(os.getenv("SQS_VISIBILITY_TIMEOUT_SECONDS", "180")),

@@ -22,6 +22,7 @@ def _retry_job_id(campaign_id, campaign_version, attempt):
 
 RETRYABLE_FAILED = RetryMetadata(attempt=1, max_attempts=3, retryable=True, resume_step=WorkflowStep.IMAGES)
 NON_RETRYABLE_FAILED = RetryMetadata(attempt=3, max_attempts=3, retryable=False, resume_step=WorkflowStep.VIDEO)
+PACKAGE_RETRYABLE_FAILED = RetryMetadata(attempt=1, max_attempts=3, retryable=True, resume_step=WorkflowStep.PACKAGE)
 
 NON_FAILED_STATUSES = [
     CampaignStatus.CREATED,
@@ -149,6 +150,30 @@ def test_retry_sends_start_operation_with_correct_job_id(client, queue, campaign
     assert message.job_id == _retry_job_id(campaign_id, 1, 1)
     assert message.campaign_id == campaign_id
     assert message.campaign_version == 1
+
+
+def test_retry_from_package_resume_step_submits_resume_operation(client, queue, campaign_at_status, headers):
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.FAILED, retry=PACKAGE_RETRYABLE_FAILED))
+
+    response = _retry(client, campaign_id, 1, headers)
+
+    assert response.status_code == 202
+    body = RetryResponse.model_validate(response.json())
+    assert body.resume_step == WorkflowStep.PACKAGE
+    messages = queue.messages()
+    assert len(messages) == 1
+    assert messages[0].operation == SQSOperation.RESUME
+    assert messages[0].job_id == _retry_job_id(campaign_id, 1, 1)
+
+
+def test_retry_from_non_package_resume_step_still_submits_start_operation(client, queue, campaign_at_status, headers):
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.FAILED, retry=RETRYABLE_FAILED))
+
+    _retry(client, campaign_id, 1, headers)
+
+    messages = queue.messages()
+    assert len(messages) == 1
+    assert messages[0].operation == SQSOperation.START
 
 
 def test_retry_vs_cancel_on_failed_campaign_cancel_rejected(client, repository, campaign_at_status, headers):

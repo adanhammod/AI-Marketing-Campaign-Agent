@@ -17,8 +17,10 @@ from .images.pipeline import StockImagePipeline
 from .images.processor import ImageProcessor
 from .images.query_generator import BedrockQueryGenerator
 from .logging import configure_logging
+from .package.pipeline import PackageAssetPipeline, S3PackagePipeline
 from .providers.base import VideoProvider
 from .providers.mock_image_provider import MockImageProvider
+from .providers.mock_package_pipeline import MockPackagePipeline
 from .providers.mock_video_provider import MockVideoProvider
 from .providers.mock_voice_provider import MockVoiceProvider
 from .providers.pexels_client import PexelsPhotoClient
@@ -85,9 +87,24 @@ def build_consumer(
             )
         except ConfigurationError:
             video_provider = MockVideoProvider()
-        processor = GraphJobProcessor(repository, image_pipeline, voice_pipeline, video_provider)
+        package_pipeline: PackageAssetPipeline = S3PackagePipeline(
+            s3,
+            artifact_store,
+            settings.artifact_bucket,
+            max_download_bytes=settings.video_max_download_bytes,
+            max_package_bytes=settings.package_max_bytes,
+        )
+        processor = GraphJobProcessor(
+            repository, image_pipeline, voice_pipeline, video_provider, package_pipeline=package_pipeline
+        )
     else:
-        processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
+        processor = GraphJobProcessor(
+            repository,
+            MockImageProvider(),
+            MockVoiceProvider(),
+            MockVideoProvider(),
+            package_pipeline=MockPackagePipeline(),
+        )
     return SQSConsumer(sqs, repository, processor, settings)
 
 

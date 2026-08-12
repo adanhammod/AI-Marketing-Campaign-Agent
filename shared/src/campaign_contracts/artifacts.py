@@ -100,3 +100,7 @@ class VideoArtifactReference(PublicArtifactReference):
 
 class AudioArtifactReference(PublicArtifactReference):
     artifact_type: ArtifactType = ArtifactType.AUDIO
+
+
+class FinalPackageArtifactReference(PublicArtifactReference):
+    artifact_type: ArtifactType = ArtifactType.FINAL_PACKAGE

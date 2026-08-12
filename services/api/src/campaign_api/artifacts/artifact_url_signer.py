@@ -12,3 +12,6 @@ class ArtifactURLSigner(ABC):
 
     @abstractmethod
     async def sign_video(self, campaign_id: UUID, campaign_version: int) -> tuple[str, datetime]: ...
+
+    @abstractmethod
+    async def sign_package(self, campaign_id: UUID, campaign_version: int) -> tuple[str, datetime]: ...

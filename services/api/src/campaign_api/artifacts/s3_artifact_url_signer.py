@@ -35,6 +35,12 @@ class S3ArtifactURLSigner(ArtifactURLSigner):
         key = f"campaigns/{campaign_id}/versions/{campaign_version}/video/final.mp4"
         return await self._sign(key)
 
+    async def sign_package(self, campaign_id: UUID, campaign_version: int) -> tuple[str, datetime]:
+        if campaign_version < 1:
+            raise ValueError("invalid artifact identity")
+        key = f"campaigns/{campaign_id}/versions/{campaign_version}/package/campaign.zip"
+        return await self._sign(key)
+
     async def _sign(self, key: str) -> tuple[str, datetime]:
         try:
             url = await asyncio.to_thread(

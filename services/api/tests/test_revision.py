@@ -4,7 +4,7 @@ from uuid import uuid4, uuid5
 
 import pytest
 from campaign_contracts.api import RevisionResponse
-from campaign_contracts.artifacts import AudioArtifactReference, ImageArtifactReference
+from campaign_contracts.artifacts import AudioArtifactReference, FinalPackageArtifactReference, ImageArtifactReference
 from campaign_contracts.campaign import (
     CampaignCopy,
     ChannelCopy,
@@ -458,6 +458,16 @@ def test_revision_does_not_inherit_approval_review_package_error_cancellation_fi
             review_package=ReviewPackage(
                 artifact_id=uuid4(), manifest_checksum=approval_checksum, artifact_ids=[uuid4()]
             ),
+            package_artifact=FinalPackageArtifactReference(
+                artifact_id=uuid4(),
+                campaign_id=uuid4(),
+                campaign_version=1,
+                workflow_step=WorkflowStep.PACKAGE,
+                mime_type="application/zip",
+                size_bytes=100,
+                checksum_sha256="a" * 64,
+                created_at=datetime.now(UTC),
+            ),
         )
     )
 
@@ -469,6 +479,7 @@ def test_revision_does_not_inherit_approval_review_package_error_cancellation_fi
     child = record[1]
     assert child.approval is None
     assert child.review_package is None
+    assert child.package_artifact is None
     assert child.error is None
     assert child.cancellation_reason is None
     assert child.cancelled_at is None
