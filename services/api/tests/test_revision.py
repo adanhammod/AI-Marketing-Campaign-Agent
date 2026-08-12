@@ -158,6 +158,25 @@ def test_revision_from_ready_for_review_returns_202_and_creates_version_2(
     assert messages[0].revision_scope == "COPY"
 
 
+def test_revision_freezes_the_parent_version_unchanged_except_status(client, repository, campaign_at_status, headers):
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW, strategy=_strategy()))
+    before = asyncio.run(repository.get(campaign_id))
+    assert before is not None
+    parent_before = before[1]
+
+    response = _revise(client, campaign_id, 1, headers, scope="COPY")
+    assert response.status_code == 202
+
+    parent_after = asyncio.run(repository.get_version(campaign_id, 1))
+    assert parent_after is not None
+    assert parent_after.status == CampaignStatus.REVISION_REQUESTED
+    # Every other field is byte-identical to the pre-revision parent -- "v1 remains unchanged".
+    assert parent_after.model_dump(exclude={"status", "lock_version", "updated_at"}) == parent_before.model_dump(
+        exclude={"status", "lock_version", "updated_at"}
+    )
+    assert parent_after.lock_version == parent_before.lock_version + 1
+
+
 @pytest.mark.parametrize("status", NON_READY_FOR_REVIEW_STATUSES)
 def test_revision_from_every_non_ready_for_review_status_rejected(client, campaign_at_status, headers, status):
     campaign_id, _ = asyncio.run(campaign_at_status(status))
@@ -210,6 +229,34 @@ def test_revision_identical_replay_creates_no_second_version_and_zero_writes(
     assert len(messages) == 1  # deterministic job_id de-duplicates in the fake queue too
     record = asyncio.run(repository.get(campaign_id))
     assert record is not None and record[1].campaign_version == 2  # no accidental N+2
+
+
+def test_revision_replay_after_child_is_no_longer_queued_is_rejected_not_silently_resubmitted(
+    client, repository, queue, campaign_at_status, headers
+):
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW))
+    first = _revise(client, campaign_id, 1, headers, reason="same reason", scope="COPY")
+    assert first.status_code == 202
+
+    # Simulate the worker fully processing and finalizing the child (v2) before the client's
+    # retried duplicate POST /revisions arrives -- a legitimate race under at-least-once HTTP retry.
+    record = asyncio.run(repository.get(campaign_id))
+    assert record is not None
+    aggregate, child = record
+    assert child.campaign_version == 2
+    finalized_child = child.model_copy(
+        update={"status": CampaignStatus.FINAL, "job_id": uuid5(campaign_id, "RESUME:2")}
+    )
+    asyncio.run(repository.replace_current(aggregate, finalized_child))
+
+    second = _revise(client, campaign_id, 1, headers, reason="same reason", scope="COPY")
+
+    assert second.status_code == 409
+    messages = queue.messages()
+    assert len(messages) == 1  # no new REGENERATE message resubmitted against the finalized version
+    record_after = asyncio.run(repository.get(campaign_id))
+    assert record_after is not None
+    assert record_after[1].status == CampaignStatus.FINAL  # unchanged -- proves no illegal reopening
 
 
 def test_revision_conflicting_replay_returns_409_idempotency_conflict(client, campaign_at_status, headers):

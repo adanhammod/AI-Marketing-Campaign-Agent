@@ -520,8 +520,14 @@ class CampaignService:
             earliest_affected_step=earliest_affected_step,
         )
 
+        # Only a still-QUEUED child is a safe idempotent replay target: once the worker has moved it
+        # past QUEUED (approved/finalized/failed/etc.), current.job_id has been rotated away from the
+        # deterministic REGENERATE job id this branch would resubmit, so re-queuing here would target a
+        # message identity the worker has never seen against a version that may already be immutable.
         is_replay_target = (
-            current.campaign_version == campaign_version + 1 and current.parent_version == campaign_version
+            current.campaign_version == campaign_version + 1
+            and current.parent_version == campaign_version
+            and current.status == CampaignStatus.QUEUED
         )
         if is_replay_target and current.revision is not None:
             if current.revision != expected_feedback:

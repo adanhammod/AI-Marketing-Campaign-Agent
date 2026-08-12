@@ -288,6 +288,47 @@ def test_artifacts_endpoint_signs_fresh_urls_and_filters_images(client, app, cam
     assert "s3_bucket" not in first.text and "s3_key" not in first.text
 
 
+def test_artifacts_endpoint_returns_all_four_artifact_types_together_for_a_completed_campaign(
+    client, app, campaign_at_status
+):
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.FINAL))
+    record = asyncio.run(app.state.repository.get(campaign_id))
+    assert record is not None
+    aggregate, version = record
+    images = _images(campaign_id)
+    voice = _voice(campaign_id)
+    video = _video(campaign_id)
+    package = _package(campaign_id)
+    asyncio.run(
+        app.state.repository.replace_current(
+            aggregate,
+            version.model_copy(
+                update={
+                    "image_artifacts": images,
+                    "voice_artifact": voice,
+                    "video_artifact": video,
+                    "package_artifact": package,
+                }
+            ),
+        )
+    )
+    app.state.artifact_signer = FakeSigner()
+
+    response = client.get(f"/api/v1/campaigns/{campaign_id}/artifacts")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    by_type: dict[str, list] = {}
+    for item in items:
+        by_type.setdefault(item["artifact_type"], []).append(item)
+    assert len(by_type["IMAGE"]) == 3
+    assert len(by_type["AUDIO"]) == 1
+    assert len(by_type["VIDEO"]) == 1
+    assert len(by_type["FINAL_PACKAGE"]) == 1
+    assert all(item["download_url"].startswith("https://") for item in items)
+    assert "s3_bucket" not in response.text and "s3_key" not in response.text
+
+
 def test_legacy_image_without_scene_or_attribution_remains_compatible(client, app, campaign_at_status):
     campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW))
     record = asyncio.run(app.state.repository.get(campaign_id))
