@@ -155,11 +155,12 @@ Success `200`:
 }
 ```
 
-Presigned image and audio URLs are generated on demand, expire within 900 seconds, and are never persisted. The API
-derives the private object identity from campaign/version (plus scene, for images) and never exposes S3 bucket or
-key. The voiceover artifact (`artifact_type: "AUDIO"`) is signed the same way but carries no `scene_number` or
-`attribution`. Existing video references are included but are not assigned a download URL. Legacy artifacts without
-scene or attribution remain valid with null optional fields. Unknown campaign/version: `404`; unsupported type: `422`.
+Presigned image, audio, and video URLs are generated on demand, expire within 900 seconds, and are never persisted.
+The API derives the private object identity from campaign/version (plus scene, for images) and never exposes S3
+bucket or key. The voiceover artifact (`artifact_type: "AUDIO"`) and the rendered campaign video
+(`artifact_type: "VIDEO"`) are signed the same way but carry no `scene_number` or `attribution`. Legacy artifacts
+without scene or attribution remain valid with null optional fields. Unknown campaign/version: `404`; unsupported
+type: `422`.
 
 ## `POST /campaigns/{campaign_id}/versions/{version}/approve`
 

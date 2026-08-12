@@ -12,8 +12,10 @@ from campaign_worker.audio.pipeline import deterministic_voice_artifact_id
 from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.images.models import NormalizedImage
 from campaign_worker.images.pipeline import deterministic_artifact_id
+from campaign_worker.video.models import RenderedVideo
+from campaign_worker.video.pipeline import deterministic_video_artifact_id
 
-from .artifact_store import StoredAudio, StoredImage
+from .artifact_store import StoredAudio, StoredImage, StoredVideo
 
 
 class S3ArtifactStore:
@@ -184,5 +186,76 @@ class S3ArtifactStore:
             artifact_id=deterministic_voice_artifact_id(version.campaign_id, version.campaign_version),
             checksum_sha256=audio.checksum_sha256,
             size_bytes=len(audio.data),
+            created_at=created_at,
+        )
+
+    @staticmethod
+    def _video_prefix(version: CampaignVersion) -> str:
+        return f"campaigns/{version.campaign_id}/versions/{version.campaign_version}/video/final"
+
+    def reconcile_video(self, version: CampaignVersion, fingerprint: str) -> StoredVideo | None:
+        prefix = self._video_prefix(version)
+        try:
+            video = self._client.get_object(Bucket=self._bucket, Key=f"{prefix}.mp4")["Body"].read()
+            raw_metadata = self._client.get_object(Bucket=self._bucket, Key=f"{prefix}.metadata.json")["Body"].read()
+            metadata = json.loads(raw_metadata)
+            checksum = hashlib.sha256(video).hexdigest()
+            if (
+                metadata["campaign_id"] != str(version.campaign_id)
+                or metadata["campaign_version"] != version.campaign_version
+                or metadata["render_fingerprint"] != fingerprint
+                or metadata["checksum_sha256"] != checksum
+            ):
+                return None
+            return StoredVideo(
+                artifact_id=deterministic_video_artifact_id(version.campaign_id, version.campaign_version),
+                checksum_sha256=checksum,
+                size_bytes=len(video),
+                created_at=datetime.fromisoformat(metadata["acquisition_timestamp"]),
+            )
+        except ClientError as exc:
+            error_code = str(exc.response.get("Error", {}).get("Code", ""))
+            if error_code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise WorkflowOperationError(
+                "STORAGE_UNAVAILABLE", "artifact reconciliation unavailable", retryable=True
+            ) from exc
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        except Exception as exc:
+            raise WorkflowOperationError(
+                "STORAGE_UNAVAILABLE", "artifact reconciliation unavailable", retryable=True
+            ) from exc
+
+    def put_video(
+        self,
+        version: CampaignVersion,
+        video: RenderedVideo,
+        metadata: dict[str, object],
+    ) -> StoredVideo:
+        prefix = self._video_prefix(version)
+        created_at = datetime.now(UTC)
+        safe_metadata = {**metadata, "acquisition_timestamp": created_at.isoformat()}
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=f"{prefix}.mp4",
+                Body=video.data,
+                ContentType="video/mp4",
+                ServerSideEncryption="AES256",
+            )
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=f"{prefix}.metadata.json",
+                Body=json.dumps(safe_metadata, sort_keys=True, separators=(",", ":")).encode(),
+                ContentType="application/json",
+                ServerSideEncryption="AES256",
+            )
+        except Exception as exc:
+            raise WorkflowOperationError("STORAGE_UNAVAILABLE", "artifact storage unavailable", retryable=True) from exc
+        return StoredVideo(
+            artifact_id=deterministic_video_artifact_id(version.campaign_id, version.campaign_version),
+            checksum_sha256=video.checksum_sha256,
+            size_bytes=len(video.data),
             created_at=created_at,
         )

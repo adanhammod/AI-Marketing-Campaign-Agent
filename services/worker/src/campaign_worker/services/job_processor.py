@@ -29,6 +29,7 @@ from campaign_worker.graph.state import GraphState
 from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.repositories.workflow_repository import LeaseContext, WorkflowRepository
+from campaign_worker.video.pipeline import VideoAssetPipeline
 
 # Pipeline order used only to decide which steps a REGENERATE message seeds as REUSED
 # before build_start_graph runs: every step strictly before message.requested_step.
@@ -80,7 +81,7 @@ class GraphJobProcessor(JobProcessor):
         repository: WorkflowRepository,
         image_provider: ImageProvider | ImageAssetPipeline,
         voice_provider: VoiceProvider | VoiceAssetPipeline,
-        video_provider: VideoProvider,
+        video_provider: VideoProvider | VideoAssetPipeline,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self._repository = repository

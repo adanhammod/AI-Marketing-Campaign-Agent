@@ -737,6 +737,17 @@ class CampaignService:
                 except Exception:
                     raise RepositoryFailure("artifact access temporarily unavailable") from None
                 values.update(download_url=download_url, download_url_expires_at=expires_at)
+            elif artifact.artifact_type == ArtifactType.VIDEO:
+                if self.artifact_signer is None:
+                    raise RepositoryFailure("artifact download service unavailable")
+                try:
+                    download_url, expires_at = await self.artifact_signer.sign_video(
+                        campaign_id,
+                        version.campaign_version,
+                    )
+                except Exception:
+                    raise RepositoryFailure("artifact access temporarily unavailable") from None
+                values.update(download_url=download_url, download_url_expires_at=expires_at)
             items.append(PublicArtifactReference.model_validate(values))
         return CampaignArtifactsResponse(
             campaign_id=campaign_id,

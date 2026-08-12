@@ -50,14 +50,17 @@ projections may include `scene_number` and an optional attribution object contai
 `provider_asset_id`, `creator_name`, `creator_profile_url`, `source_page_url`, `provider_url`, and
 `attribution_text`. Attribution URLs are HTTPS-only. These optional fields remain null for legacy artifacts. The
 voiceover artifact (`artifact_type: "AUDIO"`, `workflow_step: "voiceover"`) never carries `scene_number` or
-`attribution` -- a synthesized Polly voice is not a creator/source asset that needs crediting.
+`attribution` -- a synthesized Polly voice is not a creator/source asset that needs crediting. The rendered campaign
+video (`artifact_type: "VIDEO"`, `workflow_step: "video"`) is likewise never attributed -- it is composed locally by
+the worker (FFmpeg) from the campaign's own image and voiceover artifacts, not sourced from an external provider.
+Video-technical metadata (resolution, duration, codecs, fps, render fingerprint) is recorded only in the private S3
+metadata sidecar, never on the public artifact.
 
-Campaign detail returns persisted public image references, the existing voiceover reference, and an existing video
-reference, all without download URLs. The artifact endpoint may add fresh `download_url` and
-`download_url_expires_at` values for images and audio. Image object keys are derived server-side from validated
-campaign, version, and scene identity; the audio object key is derived from campaign and version identity alone.
-Bucket/key are never accepted from the request or returned publicly. Signed URLs expire within 900 seconds and are
-never persisted.
+Campaign detail returns persisted public image, voiceover, and video references, all without download URLs. The
+artifact endpoint may add fresh `download_url` and `download_url_expires_at` values for images, audio, and video.
+Image object keys are derived server-side from validated campaign, version, and scene identity; the audio and video
+object keys are derived from campaign and version identity alone. Bucket/key are never accepted from the request or
+returned publicly. Signed URLs expire within 900 seconds and are never persisted.
 
 ## Sanitized Error
 

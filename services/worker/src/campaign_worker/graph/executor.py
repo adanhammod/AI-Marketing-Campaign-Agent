@@ -10,6 +10,7 @@ from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
+from campaign_worker.video.pipeline import VideoAssetPipeline
 
 from . import nodes as _nodes
 from .boundary import with_cancellation_check, with_failure_attribution, with_step_tracking
@@ -69,7 +70,7 @@ def build_start_graph(
     is_cancelled: Callable[[], Awaitable[bool]],
     image_provider: ImageProvider | ImageAssetPipeline,
     voice_provider: VoiceProvider | VoiceAssetPipeline,
-    video_provider: VideoProvider,
+    video_provider: VideoProvider | VideoAssetPipeline,
 ) -> _CompiledGraph:
     def cancellable(name: str, fn: NodeFn) -> NodeFn:
         return with_cancellation_check(is_cancelled, name)(fn)
@@ -90,6 +91,11 @@ def build_start_graph(
         if isinstance(voice_provider, VoiceProvider)
         else _nodes.make_acquire_voiceover_node(voice_provider, is_cancelled)
     )
+    video_node = (
+        _nodes.make_render_video_node(video_provider)
+        if isinstance(video_provider, VideoProvider)
+        else _nodes.make_acquire_video_node(video_provider, is_cancelled)
+    )
 
     return build_graph(
         nodes={
@@ -101,9 +107,7 @@ def build_start_graph(
             "create_storyboard": tracked_step("create_storyboard", WorkflowStep.STORYBOARD, _nodes.create_storyboard),
             "generate_images": tracked_step("generate_images", WorkflowStep.IMAGES, image_node),
             "generate_voiceover": tracked_step("generate_voiceover", WorkflowStep.VOICEOVER, voice_node),
-            "render_video": tracked_step(
-                "render_video", WorkflowStep.VIDEO, _nodes.make_render_video_node(video_provider)
-            ),
+            "render_video": tracked_step("render_video", WorkflowStep.VIDEO, video_node),
             "validate_review_package": cancellable("validate_review_package", _nodes.validate_review_package),
             "await_human_approval": cancellable("await_human_approval", _nodes.await_human_approval),
         },

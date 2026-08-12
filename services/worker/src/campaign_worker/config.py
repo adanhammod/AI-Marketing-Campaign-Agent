@@ -1,4 +1,5 @@
 import os
+import shutil
 from dataclasses import dataclass
 
 from .errors import ConfigurationError
@@ -16,6 +17,10 @@ class Settings:
     image_max_download_bytes: int = 25_000_000
     polly_voice_id: str | None = None
     polly_engine: str = "neural"
+    ffmpeg_path: str = "ffmpeg"
+    ffprobe_path: str = "ffprobe"
+    video_render_timeout_seconds: float = 60
+    video_max_download_bytes: int = 50_000_000
     table_name: str | None = None
     wait_time_seconds: int = 20
     batch_size: int = 1
@@ -58,6 +63,16 @@ class Settings:
         if self.polly_engine not in {"standard", "neural", "long-form", "generative"}:
             raise ConfigurationError("Polly engine must be one of standard, neural, long-form, generative")
 
+    def validate_video_pipeline(self) -> None:
+        if shutil.which(self.ffmpeg_path) is None:
+            raise ConfigurationError(f"ffmpeg binary '{self.ffmpeg_path}' was not found on PATH")
+        if shutil.which(self.ffprobe_path) is None:
+            raise ConfigurationError(f"ffprobe binary '{self.ffprobe_path}' was not found on PATH")
+        if self.video_render_timeout_seconds <= 0:
+            raise ConfigurationError("video render timeout must be positive")
+        if self.video_max_download_bytes < 1:
+            raise ConfigurationError("video download bound must be positive")
+
     @classmethod
     def from_env(cls) -> "Settings":
         value = cls(
@@ -72,6 +87,10 @@ class Settings:
             image_max_download_bytes=int(os.getenv("IMAGE_MAX_DOWNLOAD_BYTES", "25000000")),
             polly_voice_id=os.getenv("POLLY_VOICE_ID"),
             polly_engine=os.getenv("POLLY_ENGINE", "neural"),
+            ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg"),
+            ffprobe_path=os.getenv("FFPROBE_PATH", "ffprobe"),
+            video_render_timeout_seconds=float(os.getenv("VIDEO_RENDER_TIMEOUT_SECONDS", "60")),
+            video_max_download_bytes=int(os.getenv("VIDEO_MAX_DOWNLOAD_BYTES", "50000000")),
             wait_time_seconds=int(os.getenv("SQS_WAIT_TIME_SECONDS", "20")),
             batch_size=int(os.getenv("SQS_BATCH_SIZE", "1")),
             visibility_timeout_seconds=int(os.getenv("SQS_VISIBILITY_TIMEOUT_SECONDS", "180")),

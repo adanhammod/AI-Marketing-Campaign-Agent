@@ -21,6 +21,7 @@ from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.models import ImageGenerationRequest, VideoRenderRequest
 from campaign_worker.providers.voice_models import VoiceGenerationRequest
+from campaign_worker.video.pipeline import VideoAssetPipeline
 
 from .boundary import NodeCancelled, NodeFn
 from .state import GraphState, ReviewPackageValidationResult
@@ -185,6 +186,15 @@ def make_render_video_node(provider: VideoProvider) -> NodeFn:
         return {"version": version.model_copy(update={"video_artifact": result.artifact})}
 
     return render_video
+
+
+def make_acquire_video_node(pipeline: VideoAssetPipeline, is_cancelled: Callable[[], Awaitable[bool]]) -> NodeFn:
+    async def acquire_video(state: GraphState) -> GraphState:
+        version = state["version"]
+        artifact = await pipeline.acquire(version, is_cancelled)
+        return {"version": version.model_copy(update={"video_artifact": artifact})}
+
+    return acquire_video
 
 
 async def validate_review_package(state: GraphState) -> GraphState:

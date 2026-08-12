@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -6,8 +8,10 @@ from campaign_worker.config import Settings
 from campaign_worker.errors import ConfigurationError
 from campaign_worker.health import build_health_app
 from campaign_worker.main import build_consumer
+from campaign_worker.providers.mock_video_provider import MockVideoProvider
 from campaign_worker.providers.mock_voice_provider import MockVoiceProvider
 from campaign_worker.services.job_processor import GraphJobProcessor, NoOpJobProcessor
+from campaign_worker.video.pipeline import FfmpegVideoPipeline
 
 
 def _settings(**overrides):
@@ -91,3 +95,37 @@ def test_build_consumer_rejects_an_unsupported_polly_engine():
             s3_client=object(),
             polly_client=object(),
         )
+
+
+def test_build_consumer_wires_a_real_ffmpeg_video_pipeline_when_ffmpeg_is_available():
+    # sys.executable is guaranteed to exist and be executable in any test environment,
+    # standing in for a real ffmpeg/ffprobe binary purely for availability detection.
+    settings = _settings(ffmpeg_path=sys.executable, ffprobe_path=sys.executable)
+    consumer = build_consumer(
+        settings,
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    assert isinstance(consumer._processor._video_provider, FfmpegVideoPipeline)
+
+
+def test_build_consumer_falls_back_to_mock_video_provider_when_ffmpeg_is_unavailable():
+    settings = _settings(ffmpeg_path="/nonexistent/ffmpeg-xyz", ffprobe_path="/nonexistent/ffprobe-xyz")
+    consumer = build_consumer(
+        settings,
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    assert isinstance(consumer._processor._video_provider, MockVideoProvider)
+
+
+def test_build_consumer_falls_back_to_mock_video_provider_when_asset_pipeline_is_not_configured():
+    settings = _settings(artifact_bucket=None, pexels_api_key=None, bedrock_image_query_model_id=None)
+    consumer = build_consumer(settings, sqs_client=object(), dynamodb_client=object())
+    assert isinstance(consumer._processor._video_provider, MockVideoProvider)

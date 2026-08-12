@@ -11,11 +11,13 @@ from .audio.pipeline import PollyVoicePipeline
 from .audio.processor import AudioProcessor
 from .config import Settings
 from .consumer.sqs_consumer import SQSConsumer
+from .errors import ConfigurationError
 from .health import build_health_app
 from .images.pipeline import StockImagePipeline
 from .images.processor import ImageProcessor
 from .images.query_generator import BedrockQueryGenerator
 from .logging import configure_logging
+from .providers.base import VideoProvider
 from .providers.mock_image_provider import MockImageProvider
 from .providers.mock_video_provider import MockVideoProvider
 from .providers.mock_voice_provider import MockVoiceProvider
@@ -23,6 +25,7 @@ from .providers.pexels_client import PexelsPhotoClient
 from .repositories.dynamodb_workflow_repository import DynamoDBWorkflowRepository
 from .services.job_processor import GraphJobProcessor
 from .storage.s3_artifact_store import S3ArtifactStore
+from .video.pipeline import FfmpegVideoPipeline, VideoAssetPipeline
 
 
 def build_consumer(
@@ -68,7 +71,21 @@ def build_consumer(
             voice_id=settings.polly_voice_id,
             engine=settings.polly_engine,
         )
-        processor = GraphJobProcessor(repository, image_pipeline, voice_pipeline, MockVideoProvider())
+        video_provider: VideoProvider | VideoAssetPipeline
+        try:
+            settings.validate_video_pipeline()
+            video_provider = FfmpegVideoPipeline(
+                s3,
+                artifact_store,
+                settings.artifact_bucket,
+                ffmpeg_path=settings.ffmpeg_path,
+                ffprobe_path=settings.ffprobe_path,
+                render_timeout_seconds=settings.video_render_timeout_seconds,
+                max_download_bytes=settings.video_max_download_bytes,
+            )
+        except ConfigurationError:
+            video_provider = MockVideoProvider()
+        processor = GraphJobProcessor(repository, image_pipeline, voice_pipeline, video_provider)
     else:
         processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
     return SQSConsumer(sqs, repository, processor, settings)
