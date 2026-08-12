@@ -20,6 +20,7 @@ from campaign_contracts.events import CampaignEvent
 from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.steps import WorkflowStepRecord
 
+from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.events import deterministic_event_id
 from campaign_worker.graph import nodes
 from campaign_worker.graph.boundary import NodeFailure
@@ -36,6 +37,7 @@ _PIPELINE_ORDER: tuple[WorkflowStep, ...] = (
     WorkflowStep.COPY,
     WorkflowStep.STORYBOARD,
     WorkflowStep.IMAGES,
+    WorkflowStep.VOICEOVER,
     WorkflowStep.VIDEO,
 )
 
@@ -77,7 +79,7 @@ class GraphJobProcessor(JobProcessor):
         self,
         repository: WorkflowRepository,
         image_provider: ImageProvider | ImageAssetPipeline,
-        voice_provider: VoiceProvider,
+        voice_provider: VoiceProvider | VoiceAssetPipeline,
         video_provider: VideoProvider,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:

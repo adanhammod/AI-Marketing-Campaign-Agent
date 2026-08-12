@@ -96,3 +96,7 @@ class ImageArtifactReference(PublicArtifactReference):
 
 class VideoArtifactReference(PublicArtifactReference):
     artifact_type: ArtifactType = ArtifactType.VIDEO
+
+
+class AudioArtifactReference(PublicArtifactReference):
+    artifact_type: ArtifactType = ArtifactType.AUDIO

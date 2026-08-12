@@ -48,12 +48,16 @@ Rules:
 Public projection omits `s3_bucket`, `s3_key`, provider-private identifiers, and internal generation fields. Image
 projections may include `scene_number` and an optional attribution object containing only
 `provider_asset_id`, `creator_name`, `creator_profile_url`, `source_page_url`, `provider_url`, and
-`attribution_text`. Attribution URLs are HTTPS-only. These optional fields remain null for legacy artifacts.
+`attribution_text`. Attribution URLs are HTTPS-only. These optional fields remain null for legacy artifacts. The
+voiceover artifact (`artifact_type: "AUDIO"`, `workflow_step: "voiceover"`) never carries `scene_number` or
+`attribution` -- a synthesized Polly voice is not a creator/source asset that needs crediting.
 
-Campaign detail returns persisted public image references and an existing video reference without download URLs.
-The artifact endpoint may add fresh `download_url` and `download_url_expires_at` values. Image object keys are
-derived server-side from validated campaign, version, and scene identity; bucket/key are never accepted from the
-request or returned publicly. Signed URLs expire within 900 seconds and are never persisted.
+Campaign detail returns persisted public image references, the existing voiceover reference, and an existing video
+reference, all without download URLs. The artifact endpoint may add fresh `download_url` and
+`download_url_expires_at` values for images and audio. Image object keys are derived server-side from validated
+campaign, version, and scene identity; the audio object key is derived from campaign and version identity alone.
+Bucket/key are never accepted from the request or returned publicly. Signed URLs expire within 900 seconds and are
+never persisted.
 
 ## Sanitized Error
 
@@ -90,7 +94,7 @@ Provider status is optional and allowlisted: provider name, coarse category, num
 
 ### Stable Initial Error Codes
 
-`VALIDATION_ERROR`, `NOT_FOUND`, `STATE_CONFLICT`, `IDEMPOTENCY_CONFLICT`, `UNSUPPORTED_MESSAGE_SCHEMA`, `LEASE_CONFLICT`, `RETRY_EXHAUSTED`, `CANCELLED_BY_USER`, `BEDROCK_UNAVAILABLE`, `IMAGE_PROVIDER_UNAVAILABLE`, `VIDEO_PROVIDER_UNAVAILABLE`, `PROVIDER_POLICY_REJECTION`, `PROVIDER_THROTTLED`, `PROVIDER_TIMEOUT`, `INVALID_PROVIDER_OUTPUT`, `ARTIFACT_VALIDATION_FAILED`, `STORAGE_UNAVAILABLE`, `QUEUE_UNAVAILABLE`, `PACKAGE_VALIDATION_FAILED`, and `INTERNAL_ERROR`.
+`VALIDATION_ERROR`, `NOT_FOUND`, `STATE_CONFLICT`, `IDEMPOTENCY_CONFLICT`, `UNSUPPORTED_MESSAGE_SCHEMA`, `LEASE_CONFLICT`, `RETRY_EXHAUSTED`, `CANCELLED_BY_USER`, `BEDROCK_UNAVAILABLE`, `IMAGE_PROVIDER_UNAVAILABLE`, `VOICE_PROVIDER_UNAVAILABLE`, `VIDEO_PROVIDER_UNAVAILABLE`, `PROVIDER_POLICY_REJECTION`, `PROVIDER_THROTTLED`, `PROVIDER_TIMEOUT`, `INVALID_PROVIDER_OUTPUT`, `ARTIFACT_VALIDATION_FAILED`, `STORAGE_UNAVAILABLE`, `QUEUE_UNAVAILABLE`, `PACKAGE_VALIDATION_FAILED`, and `INTERNAL_ERROR`.
 
 ### Redaction Rules
 

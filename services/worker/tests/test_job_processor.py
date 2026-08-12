@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 from campaign_contracts.api import CampaignCreationRequest
-from campaign_contracts.artifacts import ImageArtifactReference
+from campaign_contracts.artifacts import AudioArtifactReference, ImageArtifactReference
 from campaign_contracts.campaign import (
     CampaignConstraints,
     CampaignCopy,
@@ -95,6 +95,20 @@ def _image_artifacts(campaign_id, campaign_version):
         )
         for _ in range(3)
     ]
+
+
+def _voice_artifact(campaign_id, campaign_version):
+    return AudioArtifactReference(
+        artifact_id=uuid4(),
+        campaign_id=campaign_id,
+        campaign_version=campaign_version,
+        workflow_step=WorkflowStep.VOICEOVER,
+        mime_type="audio/mpeg",
+        size_bytes=4096,
+        checksum_sha256="b" * 64,
+        created_at=datetime.now(UTC),
+        provider="polly",
+    )
 
 
 def _brief(**overrides):
@@ -444,13 +458,19 @@ async def test_regenerate_storyboard_seeds_strategy_and_copy_as_reused():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_video_seeds_strategy_copy_storyboard_and_images_as_reused():
+async def test_regenerate_video_seeds_strategy_copy_storyboard_images_and_voice_as_reused():
     repository, processor = _processor(repository=_TrackingRepository())
+    campaign_id = uuid4()
     version = _version(
+        campaign_id=campaign_id,
         strategy=_strategy_output(),
         copy=_campaign_copy(),
         storyboard=_storyboard_output(),
-        image_artifacts=_image_artifacts(uuid4(), 1),
+        image_artifacts=_image_artifacts(campaign_id, 1),
+        # A VIDEO-scope revision must carry the parent's voice_artifact forward (mirroring
+        # what campaign_service.revise() does on the API side) -- otherwise render_video has
+        # nothing to consume even though generate_voiceover is correctly seeded REUSED.
+        voice_artifact=_voice_artifact(campaign_id, 1),
     )
     message = _message(
         SQSOperation.REGENERATE,
@@ -463,13 +483,20 @@ async def test_regenerate_video_seeds_strategy_copy_storyboard_and_images_as_reu
     result = await processor.process(message, version, _lease())
 
     assert result.completed is True
-    for step in (WorkflowStep.STRATEGY, WorkflowStep.COPY, WorkflowStep.STORYBOARD, WorkflowStep.IMAGES):
+    for step in (
+        WorkflowStep.STRATEGY,
+        WorkflowStep.COPY,
+        WorkflowStep.STORYBOARD,
+        WorkflowStep.IMAGES,
+        WorkflowStep.VOICEOVER,
+    ):
         assert repository.steps[(version.campaign_id, version.campaign_version, step)].status == StepStatus.REUSED
         assert step not in repository.running_steps
     assert WorkflowStep.VIDEO in repository.running_steps
     final = repository.save_calls[-1]
     assert final.status == CampaignStatus.READY_FOR_REVIEW
     assert final.image_artifacts == version.image_artifacts  # preserved, not regenerated
+    assert final.voice_artifact == version.voice_artifact  # preserved, not regenerated
     assert final.video_artifact is not None
 
 

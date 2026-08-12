@@ -15,6 +15,7 @@ from campaign_contracts.campaign import (
 from campaign_contracts.enums import CampaignStatus, ErrorComponent, WorkflowStep
 from campaign_contracts.errors import SanitizedWorkflowError
 
+from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
@@ -145,9 +146,18 @@ def make_generate_voiceover_node(provider: VoiceProvider) -> NodeFn:
         result = await provider.generate_voice(request)
         if result.artifact is None:
             raise ValueError(f"voice generation failed: {result.error}")
-        return {"version": version, "voice_artifact": result.artifact}
+        return {"version": version.model_copy(update={"voice_artifact": result.artifact})}
 
     return generate_voiceover
+
+
+def make_acquire_voiceover_node(pipeline: VoiceAssetPipeline, is_cancelled: Callable[[], Awaitable[bool]]) -> NodeFn:
+    async def acquire_voiceover(state: GraphState) -> GraphState:
+        version = state["version"]
+        artifact = await pipeline.acquire(version, is_cancelled)
+        return {"version": version.model_copy(update={"voice_artifact": artifact})}
+
+    return acquire_voiceover
 
 
 def make_render_video_node(provider: VideoProvider) -> NodeFn:
@@ -158,7 +168,7 @@ def make_render_video_node(provider: VideoProvider) -> NodeFn:
             raise ValueError("render_video requires create_storyboard to have run first")
         if not version.image_artifacts:
             raise ValueError("render_video requires generate_images to have run first")
-        voice_artifact = state.get("voice_artifact")
+        voice_artifact = version.voice_artifact
         if voice_artifact is None:
             raise ValueError("render_video requires generate_voiceover to have run first")
         request = VideoRenderRequest(
@@ -188,7 +198,7 @@ async def validate_review_package(state: GraphState) -> GraphState:
         missing.append("storyboard")
     if not version.image_artifacts:
         missing.append("image_artifacts")
-    if state.get("voice_artifact") is None:
+    if version.voice_artifact is None:
         missing.append("voice_artifact")
     if version.video_artifact is None:
         missing.append("video_artifact")

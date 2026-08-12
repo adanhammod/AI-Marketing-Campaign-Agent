@@ -6,6 +6,7 @@ from campaign_contracts.enums import WorkflowStep
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
@@ -67,7 +68,7 @@ def build_start_graph(
     repository: WorkflowRepository,
     is_cancelled: Callable[[], Awaitable[bool]],
     image_provider: ImageProvider | ImageAssetPipeline,
-    voice_provider: VoiceProvider,
+    voice_provider: VoiceProvider | VoiceAssetPipeline,
     video_provider: VideoProvider,
 ) -> _CompiledGraph:
     def cancellable(name: str, fn: NodeFn) -> NodeFn:
@@ -84,6 +85,11 @@ def build_start_graph(
         if isinstance(image_provider, ImageProvider)
         else _nodes.make_acquire_images_node(image_provider, is_cancelled)
     )
+    voice_node = (
+        _nodes.make_generate_voiceover_node(voice_provider)
+        if isinstance(voice_provider, VoiceProvider)
+        else _nodes.make_acquire_voiceover_node(voice_provider, is_cancelled)
+    )
 
     return build_graph(
         nodes={
@@ -94,9 +100,7 @@ def build_start_graph(
             "generate_copy": tracked_step("generate_copy", WorkflowStep.COPY, _nodes.generate_copy),
             "create_storyboard": tracked_step("create_storyboard", WorkflowStep.STORYBOARD, _nodes.create_storyboard),
             "generate_images": tracked_step("generate_images", WorkflowStep.IMAGES, image_node),
-            "generate_voiceover": cancellable(
-                "generate_voiceover", _nodes.make_generate_voiceover_node(voice_provider)
-            ),
+            "generate_voiceover": tracked_step("generate_voiceover", WorkflowStep.VOICEOVER, voice_node),
             "render_video": tracked_step(
                 "render_video", WorkflowStep.VIDEO, _nodes.make_render_video_node(video_provider)
             ),

@@ -65,6 +65,7 @@ _STEP_ORDER = (
     WorkflowStep.COPY,
     WorkflowStep.STORYBOARD,
     WorkflowStep.IMAGES,
+    WorkflowStep.VOICEOVER,
     WorkflowStep.VIDEO,
 )
 
@@ -76,6 +77,7 @@ _REVISION_PROGRESS_FLOOR: dict[WorkflowStep, int] = {
     WorkflowStep.COPY: 20,
     WorkflowStep.STORYBOARD: 40,
     WorkflowStep.IMAGES: 60,
+    WorkflowStep.VOICEOVER: 70,
     WorkflowStep.VIDEO: 80,
 }
 
@@ -547,6 +549,7 @@ class CampaignService:
         reuse_copy = WorkflowStep.COPY in reused_steps
         reuse_storyboard = WorkflowStep.STORYBOARD in reused_steps
         reuse_images = WorkflowStep.IMAGES in reused_steps
+        reuse_voice = WorkflowStep.VOICEOVER in reused_steps
 
         child_version = CampaignVersion(
             schema_version=1,
@@ -564,6 +567,7 @@ class CampaignService:
             storyboard=current.storyboard if reuse_storyboard else None,
             image_prompts=list(current.image_prompts) if reuse_images else [],
             image_artifacts=list(current.image_artifacts) if reuse_images else [],
+            voice_artifact=current.voice_artifact if reuse_voice else None,
             video_artifact=None,
             review_package=None,
             revision=expected_feedback,
@@ -654,7 +658,11 @@ class CampaignService:
             strategy=v.strategy,
             copy=v.campaign_copy,
             storyboard=v.storyboard,
-            artifacts=[*v.image_artifacts, *([v.video_artifact] if v.video_artifact is not None else [])],
+            artifacts=[
+                *v.image_artifacts,
+                *([v.voice_artifact] if v.voice_artifact is not None else []),
+                *([v.video_artifact] if v.video_artifact is not None else []),
+            ],
             revision=v.revision,
             approval=v.approval,
             completed_steps=v.completed_steps,
@@ -695,7 +703,11 @@ class CampaignService:
                 raise CampaignNotFound("campaign version not found")
             version = historical_version
 
-        stored = [*version.image_artifacts, *([version.video_artifact] if version.video_artifact is not None else [])]
+        stored = [
+            *version.image_artifacts,
+            *([version.voice_artifact] if version.voice_artifact is not None else []),
+            *([version.video_artifact] if version.video_artifact is not None else []),
+        ]
         if artifact_type is not None:
             stored = [artifact for artifact in stored if artifact.artifact_type == artifact_type]
 
@@ -710,6 +722,17 @@ class CampaignService:
                         campaign_id,
                         version.campaign_version,
                         artifact.scene_number,
+                    )
+                except Exception:
+                    raise RepositoryFailure("artifact access temporarily unavailable") from None
+                values.update(download_url=download_url, download_url_expires_at=expires_at)
+            elif artifact.artifact_type == ArtifactType.AUDIO:
+                if self.artifact_signer is None:
+                    raise RepositoryFailure("artifact download service unavailable")
+                try:
+                    download_url, expires_at = await self.artifact_signer.sign_audio(
+                        campaign_id,
+                        version.campaign_version,
                     )
                 except Exception:
                     raise RepositoryFailure("artifact access temporarily unavailable") from None

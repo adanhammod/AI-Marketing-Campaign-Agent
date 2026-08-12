@@ -14,6 +14,8 @@ class Settings:
     pexels_candidate_count: int = 15
     image_http_timeout_seconds: float = 20
     image_max_download_bytes: int = 25_000_000
+    polly_voice_id: str | None = None
+    polly_engine: str = "neural"
     table_name: str | None = None
     wait_time_seconds: int = 20
     batch_size: int = 1
@@ -52,6 +54,10 @@ class Settings:
         if self.image_max_download_bytes < 1:
             raise ConfigurationError("image download bound must be positive")
 
+    def validate_voice_pipeline(self) -> None:
+        if self.polly_engine not in {"standard", "neural", "long-form", "generative"}:
+            raise ConfigurationError("Polly engine must be one of standard, neural, long-form, generative")
+
     @classmethod
     def from_env(cls) -> "Settings":
         value = cls(
@@ -64,6 +70,8 @@ class Settings:
             pexels_candidate_count=int(os.getenv("PEXELS_CANDIDATE_COUNT", "15")),
             image_http_timeout_seconds=float(os.getenv("IMAGE_HTTP_TIMEOUT_SECONDS", "20")),
             image_max_download_bytes=int(os.getenv("IMAGE_MAX_DOWNLOAD_BYTES", "25000000")),
+            polly_voice_id=os.getenv("POLLY_VOICE_ID"),
+            polly_engine=os.getenv("POLLY_ENGINE", "neural"),
             wait_time_seconds=int(os.getenv("SQS_WAIT_TIME_SECONDS", "20")),
             batch_size=int(os.getenv("SQS_BATCH_SIZE", "1")),
             visibility_timeout_seconds=int(os.getenv("SQS_VISIBILITY_TIMEOUT_SECONDS", "180")),

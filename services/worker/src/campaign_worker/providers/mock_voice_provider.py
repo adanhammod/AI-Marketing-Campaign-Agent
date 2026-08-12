@@ -2,8 +2,8 @@ import hashlib
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from campaign_contracts.artifacts import PublicArtifactReference
-from campaign_contracts.enums import ArtifactType, WorkflowStep
+from campaign_contracts.artifacts import AudioArtifactReference
+from campaign_contracts.enums import WorkflowStep
 
 from .base import VoiceProvider
 from .voice_models import VoiceGenerationRequest, VoiceGenerationResult
@@ -16,12 +16,11 @@ class MockVoiceProvider(VoiceProvider):
         started_at = datetime.now(UTC)
         signature = f"{request.campaign_id}:{request.campaign_version}:{request.narration_text}"
         checksum = hashlib.sha256(signature.encode()).hexdigest()
-        artifact = PublicArtifactReference(
+        artifact = AudioArtifactReference(
             artifact_id=uuid4(),
-            artifact_type=ArtifactType.AUDIO,
             campaign_id=request.campaign_id,
             campaign_version=request.campaign_version,
-            workflow_step=WorkflowStep.VIDEO,
+            workflow_step=WorkflowStep.VOICEOVER,
             mime_type="audio/mpeg",
             size_bytes=2048,
             checksum_sha256=checksum,

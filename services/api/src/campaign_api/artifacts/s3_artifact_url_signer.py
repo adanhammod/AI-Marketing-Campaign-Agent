@@ -21,6 +21,15 @@ class S3ArtifactURLSigner(ArtifactURLSigner):
         if campaign_version < 1 or not 1 <= scene_number <= 3:
             raise ValueError("invalid artifact identity")
         key = f"campaigns/{campaign_id}/versions/{campaign_version}/images/scene-{scene_number}.jpg"
+        return await self._sign(key)
+
+    async def sign_audio(self, campaign_id: UUID, campaign_version: int) -> tuple[str, datetime]:
+        if campaign_version < 1:
+            raise ValueError("invalid artifact identity")
+        key = f"campaigns/{campaign_id}/versions/{campaign_version}/audio/voiceover.mp3"
+        return await self._sign(key)
+
+    async def _sign(self, key: str) -> tuple[str, datetime]:
         try:
             url = await asyncio.to_thread(
                 self._client.generate_presigned_url,

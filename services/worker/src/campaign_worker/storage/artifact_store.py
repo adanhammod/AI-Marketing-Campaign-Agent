@@ -6,6 +6,7 @@ from uuid import UUID
 from campaign_contracts.artifacts import ArtifactAttribution
 from campaign_contracts.campaign import CampaignVersion
 
+from campaign_worker.audio.models import NormalizedAudio
 from campaign_worker.images.models import NormalizedImage
 
 
@@ -19,6 +20,14 @@ class StoredImage:
     attribution: ArtifactAttribution | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class StoredAudio:
+    artifact_id: UUID
+    checksum_sha256: str
+    size_bytes: int
+    created_at: datetime
+
+
 class ArtifactStore(Protocol):
     def reconcile(self, version: CampaignVersion, scene_number: int, fingerprint: str) -> StoredImage | None: ...
 
@@ -29,3 +38,14 @@ class ArtifactStore(Protocol):
         image: NormalizedImage,
         metadata: dict[str, object],
     ) -> StoredImage: ...
+
+
+class AudioArtifactStore(Protocol):
+    def reconcile_audio(self, version: CampaignVersion, fingerprint: str) -> StoredAudio | None: ...
+
+    def put_audio(
+        self,
+        version: CampaignVersion,
+        audio: NormalizedAudio,
+        metadata: dict[str, object],
+    ) -> StoredAudio: ...

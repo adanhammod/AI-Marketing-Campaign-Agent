@@ -353,27 +353,32 @@ async def test_generate_voiceover_requires_prior_storyboard():
 
 
 @pytest.mark.asyncio
-async def test_generate_voiceover_produces_a_voice_artifact_in_graph_state():
+async def test_generate_voiceover_produces_a_voice_artifact_on_the_campaign_version():
     version = await _version_with_storyboard()
     node = nodes.make_generate_voiceover_node(MockVoiceProvider())
 
     result = await node({"version": version})
 
-    voice_artifact = result["voice_artifact"]
+    voice_artifact = result["version"].voice_artifact
+    assert voice_artifact is not None
     assert voice_artifact.campaign_id == version.campaign_id
     assert voice_artifact.campaign_version == version.campaign_version
     assert voice_artifact.artifact_type.value == "AUDIO"
+    assert voice_artifact.workflow_step == WorkflowStep.VOICEOVER
 
 
 @pytest.mark.asyncio
-async def test_generate_voiceover_does_not_persist_to_campaign_version():
+async def test_generate_voiceover_persists_to_campaign_version():
+    # C7 supersedes the earlier ephemeral-only design: voiceover must survive process
+    # restart, duplicate delivery, and retry, which requires it live on CampaignVersion.
     version = await _version_with_storyboard()
     node = nodes.make_generate_voiceover_node(MockVoiceProvider())
 
     result = await node({"version": version})
 
-    assert result["version"] is version
-    assert not hasattr(result["version"], "voice_artifact")
+    assert result["version"] is not version
+    assert result["version"].voice_artifact is not None
+    assert version.voice_artifact is None
 
 
 @pytest.mark.asyncio
@@ -396,7 +401,7 @@ async def test_generate_voiceover_is_deterministic_with_mock_provider():
     first = await node({"version": version})
     second = await node({"version": version})
 
-    assert first["voice_artifact"].checksum_sha256 == second["voice_artifact"].checksum_sha256
+    assert first["version"].voice_artifact.checksum_sha256 == second["version"].voice_artifact.checksum_sha256
 
 
 @pytest.mark.asyncio
@@ -414,7 +419,7 @@ async def test_generate_voiceover_is_provider_agnostic():
     async def run_with(provider: VoiceProvider):
         node = nodes.make_generate_voiceover_node(provider)
         result = await node({"version": version})
-        return result["voice_artifact"]
+        return result["version"].voice_artifact
 
     mock_artifact = await run_with(MockVoiceProvider())
     counting_provider = _CountingMockVoiceProvider()
@@ -424,11 +429,53 @@ async def test_generate_voiceover_is_provider_agnostic():
     assert counting_provider.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_generate_voiceover_wrapped_with_step_tracking_runs_on_first_execution():
+    version = await _version_with_storyboard()
+    repository = _FakeStepRepositoryForGenerateImages()
+    provider = _CountingMockVoiceProvider()
+    wrapped = with_step_tracking(WorkflowStep.VOICEOVER, repository)(nodes.make_generate_voiceover_node(provider))
+
+    result = await wrapped({"version": version})
+
+    assert provider.calls == 1
+    assert result["version"].voice_artifact is not None
+    assert [record.status for record in repository.save_calls] == [StepStatus.RUNNING, StepStatus.SUCCEEDED]
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_wrapped_with_step_tracking_skips_when_already_succeeded():
+    version = await _version_with_storyboard()
+    now = datetime.now(UTC)
+    repository = _FakeStepRepositoryForGenerateImages(
+        seed={
+            (version.campaign_id, version.campaign_version, WorkflowStep.VOICEOVER): WorkflowStepRecord(
+                campaign_id=version.campaign_id,
+                campaign_version=version.campaign_version,
+                step=WorkflowStep.VOICEOVER,
+                status=StepStatus.SUCCEEDED,
+                created_at=now,
+                updated_at=now,
+            )
+        }
+    )
+    provider = _CountingMockVoiceProvider()
+    wrapped = with_step_tracking(WorkflowStep.VOICEOVER, repository)(nodes.make_generate_voiceover_node(provider))
+
+    result = await wrapped({"version": version})
+
+    # Not called at all: duplicate SQS delivery (or any redelivery once VOICEOVER already
+    # succeeded for this campaign_version) must not trigger a second Polly synthesis.
+    assert provider.calls == 0
+    assert result["version"].voice_artifact == version.voice_artifact
+    assert repository.save_calls == []
+
+
 async def _state_with_images_and_voice() -> GraphState:
     version = await _version_with_storyboard()
     images_result = await nodes.make_generate_images_node(MockImageProvider())({"version": version})
-    voice_result = await nodes.make_generate_voiceover_node(MockVoiceProvider())({"version": version})
-    return {"version": images_result["version"], "voice_artifact": voice_result["voice_artifact"]}
+    voice_result = await nodes.make_generate_voiceover_node(MockVoiceProvider())({"version": images_result["version"]})
+    return {"version": voice_result["version"]}
 
 
 class _AlwaysFailsVideoProvider(VideoProvider):
@@ -472,7 +519,7 @@ async def test_render_video_requires_prior_storyboard():
 async def test_render_video_requires_prior_generate_images():
     version = await _version_with_storyboard()
     voice_result = await nodes.make_generate_voiceover_node(MockVoiceProvider())({"version": version})
-    state: GraphState = {"version": version, "voice_artifact": voice_result["voice_artifact"]}
+    state: GraphState = {"version": voice_result["version"]}
     node = nodes.make_render_video_node(MockVideoProvider())
     with pytest.raises(ValueError, match="generate_images"):
         await node(state)
@@ -508,7 +555,7 @@ async def test_render_video_forwards_voice_artifact_to_the_provider_request():
 
     await node(state)
 
-    assert provider.received_requests[0].voice_artifact == state["voice_artifact"]
+    assert provider.received_requests[0].voice_artifact == state["version"].voice_artifact
 
 
 @pytest.mark.asyncio
@@ -592,7 +639,7 @@ async def _state_with_full_review_package() -> GraphState:
     state = await _state_with_images_and_voice()
     render_node = nodes.make_render_video_node(MockVideoProvider())
     rendered = await render_node(state)
-    return {"version": rendered["version"], "voice_artifact": state["voice_artifact"]}
+    return {"version": rendered["version"]}
 
 
 @pytest.mark.asyncio
@@ -627,9 +674,11 @@ async def test_validate_review_package_reports_all_missing_artifacts_for_a_fresh
 @pytest.mark.asyncio
 async def test_validate_review_package_reports_only_missing_voice_artifact():
     state = await _state_with_full_review_package()
-    state = {"version": state["version"]}  # voice_artifact intentionally dropped
+    # voice_artifact now lives on CampaignVersion, so isolate validate_review_package's
+    # own field-by-field logic by clearing just that one field on an otherwise-complete version.
+    version = state["version"].model_copy(update={"voice_artifact": None})
 
-    result = await nodes.validate_review_package(state)
+    result = await nodes.validate_review_package({"version": version})
 
     validation = result["review_validation"]
     assert validation.is_valid is False
@@ -654,7 +703,7 @@ async def test_validate_review_package_preserves_existing_state_keys():
     result = await nodes.validate_review_package(state)
 
     assert result["version"] is state["version"]
-    assert result["voice_artifact"] is state["voice_artifact"]
+    assert result["version"].voice_artifact is state["version"].voice_artifact
 
 
 async def _state_with_valid_review_package() -> GraphState:

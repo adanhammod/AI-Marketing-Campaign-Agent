@@ -2,7 +2,12 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from campaign_contracts.artifacts import ArtifactAttribution, ImageArtifactReference, VideoArtifactReference
+from campaign_contracts.artifacts import (
+    ArtifactAttribution,
+    AudioArtifactReference,
+    ImageArtifactReference,
+    VideoArtifactReference,
+)
 from campaign_contracts.enums import CampaignStatus, WorkflowStep
 
 from campaign_api.artifacts.artifact_url_signer import ArtifactURLSigner
@@ -13,11 +18,19 @@ from campaign_api.exceptions import RepositoryFailure
 class FakeSigner(ArtifactURLSigner):
     def __init__(self) -> None:
         self.calls: list[tuple[UUID, int, int]] = []
+        self.audio_calls: list[tuple[UUID, int]] = []
 
     async def sign_image(self, campaign_id: UUID, campaign_version: int, scene_number: int):
         self.calls.append((campaign_id, campaign_version, scene_number))
         return (
             f"https://downloads.example.test/{campaign_id}/{campaign_version}/{scene_number}?fresh={len(self.calls)}",
+            datetime.now(UTC) + timedelta(minutes=10),
+        )
+
+    async def sign_audio(self, campaign_id: UUID, campaign_version: int):
+        self.audio_calls.append((campaign_id, campaign_version))
+        return (
+            f"https://downloads.example.test/{campaign_id}/{campaign_version}/voiceover?fresh={len(self.audio_calls)}",
             datetime.now(UTC) + timedelta(minutes=10),
         )
 
@@ -62,6 +75,20 @@ def _video(campaign_id: UUID) -> VideoArtifactReference:
     )
 
 
+def _voice(campaign_id: UUID) -> AudioArtifactReference:
+    return AudioArtifactReference(
+        artifact_id=uuid4(),
+        campaign_id=campaign_id,
+        campaign_version=1,
+        workflow_step=WorkflowStep.VOICEOVER,
+        mime_type="audio/mpeg",
+        size_bytes=4096,
+        checksum_sha256="c" * 64,
+        created_at=datetime.now(UTC),
+        provider="polly",
+    )
+
+
 def test_detail_projects_three_images_and_existing_video_without_private_locations(client, app, campaign_at_status):
     actual_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW))
     images = _images(actual_id)
@@ -85,6 +112,49 @@ def test_detail_projects_three_images_and_existing_video_without_private_locatio
     assert all(item["provider"] == "pexels" for item in artifacts[:3])
     assert all(item["attribution"]["provider_asset_id"] for item in artifacts[:3])
     assert all(item["download_url"] is None for item in artifacts)
+    assert "s3_bucket" not in response.text and "s3_key" not in response.text
+
+
+def test_detail_projects_voice_artifact_alongside_images_and_video(client, app, campaign_at_status):
+    actual_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW))
+    voice = _voice(actual_id)
+    record = asyncio.run(app.state.repository.get(actual_id))
+    assert record is not None
+    aggregate, version = record
+    asyncio.run(app.state.repository.replace_current(aggregate, version.model_copy(update={"voice_artifact": voice})))
+
+    response = client.get(f"/api/v1/campaigns/{actual_id}")
+
+    assert response.status_code == 200
+    artifacts = response.json()["artifacts"]
+    audio_items = [item for item in artifacts if item["artifact_type"] == "AUDIO"]
+    assert len(audio_items) == 1
+    assert audio_items[0]["provider"] == "polly"
+    assert audio_items[0]["attribution"] is None
+    assert "s3_bucket" not in response.text and "s3_key" not in response.text
+
+
+def test_artifacts_endpoint_signs_fresh_audio_download_url(client, app, campaign_at_status):
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW))
+    record = asyncio.run(app.state.repository.get(campaign_id))
+    assert record is not None
+    aggregate, version = record
+    voice = _voice(campaign_id)
+    asyncio.run(app.state.repository.replace_current(aggregate, version.model_copy(update={"voice_artifact": voice})))
+    signer = FakeSigner()
+    app.state.artifact_signer = signer
+
+    response = client.get(f"/api/v1/campaigns/{campaign_id}/artifacts?type=AUDIO")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["artifact_id"] == str(voice.artifact_id)
+    assert items[0]["download_url"].startswith("https://")
+    assert signer.audio_calls == [(campaign_id, 1)]
+    persisted = asyncio.run(app.state.repository.get(campaign_id))
+    assert persisted is not None
+    assert persisted[1].voice_artifact.download_url is None
     assert "s3_bucket" not in response.text and "s3_key" not in response.text
 
 
@@ -164,6 +234,9 @@ def test_signer_failure_is_sanitized(client, app, campaign_at_status):
         async def sign_image(self, campaign_id: UUID, campaign_version: int, scene_number: int):
             raise RepositoryFailure("secret-bucket AWS authorization failure")
 
+        async def sign_audio(self, campaign_id: UUID, campaign_version: int):
+            raise RepositoryFailure("secret-bucket AWS authorization failure")
+
     campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW))
     record = asyncio.run(app.state.repository.get(campaign_id))
     assert record is not None
@@ -204,6 +277,33 @@ def test_s3_signer_uses_validated_identity_and_short_expiration():
         {
             "Bucket": "private-artifacts",
             "Key": f"campaigns/{campaign_id}/versions/2/images/scene-3.jpg",
+        },
+        900,
+    )
+    assert before + timedelta(seconds=895) <= expires_at <= datetime.now(UTC) + timedelta(seconds=900)
+
+
+def test_s3_signer_signs_the_deterministic_audio_key():
+    class Client:
+        def __init__(self) -> None:
+            self.call = None
+
+        def generate_presigned_url(self, operation, *, Params, ExpiresIn):
+            self.call = (operation, Params, ExpiresIn)
+            return "https://signed.example.test/voiceover"
+
+    client = Client()
+    signer = S3ArtifactURLSigner(client, "private-artifacts", 900)
+    campaign_id = uuid4()
+    before = datetime.now(UTC)
+    url, expires_at = asyncio.run(signer.sign_audio(campaign_id, 2))
+
+    assert url.startswith("https://")
+    assert client.call == (
+        "get_object",
+        {
+            "Bucket": "private-artifacts",
+            "Key": f"campaigns/{campaign_id}/versions/2/audio/voiceover.mp3",
         },
         900,
     )

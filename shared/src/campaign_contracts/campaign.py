@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 from pydantic import Field, HttpUrl, model_validator
-from .artifacts import ImageArtifactReference, VideoArtifactReference, PublicArtifactReference
+from .artifacts import AudioArtifactReference, ImageArtifactReference, VideoArtifactReference, PublicArtifactReference
 from .enums import CampaignStatus, RevisionTarget, WorkflowStep
 from .errors import SanitizedWorkflowError
 from .validation import UTCModel
@@ -29,7 +29,7 @@ class ProcessingLease(UTCModel): owner:str; acquired_at:datetime; expires_at:dat
 class WorkflowCheckpoint(UTCModel): checkpoint_version:int=Field(ge=0); step:WorkflowStep|None=None; s3_reference:str|None=None; output_checksum:str|None=Field(default=None,pattern=r"^[0-9a-f]{64}$")
 class CampaignAggregateMetadata(UTCModel): campaign_id:UUID; current_version:int=Field(ge=1); latest_final_version:int|None=Field(default=None,ge=1); title:str; created_at:datetime; updated_at:datetime; lock_version:int=Field(ge=0); event_sequence:int=Field(default=0,ge=0); current_status:CampaignStatus|None=None; current_progress:int|None=Field(default=None,ge=0,le=100)
 class CampaignVersion(UTCModel):
-    schema_version:int=Field(default=1,ge=1,le=1); campaign_id:UUID; campaign_version:int=Field(ge=1); parent_version:int|None=Field(default=None,ge=1); job_id:UUID; status:CampaignStatus; current_step:WorkflowStep|None=None; progress_percent:int=Field(ge=0,le=100); brief:NormalizedCampaignBrief; constraints:CampaignConstraints; strategy:StrategyOutput|None=None; campaign_copy:CampaignCopy|None=Field(default=None,alias="copy",serialization_alias="copy"); storyboard:Storyboard|None=None; image_prompts:list[ImagePrompt]=Field(default_factory=list); image_artifacts:list[ImageArtifactReference]=Field(default_factory=list); video_artifact:VideoArtifactReference|None=None; review_package:ReviewPackage|None=None; revision:RevisionFeedback|None=None; approval:ApprovalRecord|None=None; completed_steps:list[WorkflowStep]=Field(default_factory=list); retry:RetryMetadata; error:SanitizedWorkflowError|None=None; cancellation_reason:str|None=Field(default=None,max_length=500); cancelled_at:datetime|None=None; created_at:datetime; updated_at:datetime; lock_version:int=Field(default=0,ge=0); checkpoint_version:int=Field(default=0,ge=0)
+    schema_version:int=Field(default=1,ge=1,le=1); campaign_id:UUID; campaign_version:int=Field(ge=1); parent_version:int|None=Field(default=None,ge=1); job_id:UUID; status:CampaignStatus; current_step:WorkflowStep|None=None; progress_percent:int=Field(ge=0,le=100); brief:NormalizedCampaignBrief; constraints:CampaignConstraints; strategy:StrategyOutput|None=None; campaign_copy:CampaignCopy|None=Field(default=None,alias="copy",serialization_alias="copy"); storyboard:Storyboard|None=None; image_prompts:list[ImagePrompt]=Field(default_factory=list); image_artifacts:list[ImageArtifactReference]=Field(default_factory=list); voice_artifact:AudioArtifactReference|None=None; video_artifact:VideoArtifactReference|None=None; review_package:ReviewPackage|None=None; revision:RevisionFeedback|None=None; approval:ApprovalRecord|None=None; completed_steps:list[WorkflowStep]=Field(default_factory=list); retry:RetryMetadata; error:SanitizedWorkflowError|None=None; cancellation_reason:str|None=Field(default=None,max_length=500); cancelled_at:datetime|None=None; created_at:datetime; updated_at:datetime; lock_version:int=Field(default=0,ge=0); checkpoint_version:int=Field(default=0,ge=0)
     @model_validator(mode="after")
     def version_parent(self):
         if (self.campaign_version==1 and self.parent_version is not None) or (self.campaign_version>1 and self.parent_version!=self.campaign_version-1): raise ValueError("parent_version must identify the immediate predecessor")
@@ -39,7 +39,7 @@ class PublicCampaignVersion(UTCModel): campaign_id:UUID; campaign_version:int; s
 
 def assert_version_immutable(before:CampaignVersion,after:CampaignVersion)->None:
     if before.status in {CampaignStatus.REVISION_REQUESTED,CampaignStatus.FINAL,CampaignStatus.CANCELLED} and before!=after: raise ValueError("immutable campaign version changed")
-    frozen={"brief","constraints","strategy","campaign_copy","storyboard","image_prompts","image_artifacts","video_artifact","review_package"}
+    frozen={"brief","constraints","strategy","campaign_copy","storyboard","image_prompts","image_artifacts","voice_artifact","video_artifact","review_package"}
     if before.status==CampaignStatus.READY_FOR_REVIEW and any(getattr(before,x)!=getattr(after,x) for x in frozen): raise ValueError("review output is immutable")
 
 REGENERATION_STEPS={RevisionTarget.STRATEGY:WorkflowStep.STRATEGY,RevisionTarget.COPY:WorkflowStep.COPY,RevisionTarget.STORYBOARD:WorkflowStep.STORYBOARD,RevisionTarget.SELECTED_IMAGES:WorkflowStep.IMAGES,RevisionTarget.VIDEO:WorkflowStep.VIDEO}

@@ -1772,6 +1772,7 @@
           "copy",
           "storyboard",
           "images",
+          "voiceover",
           "video",
           "package"
         ],

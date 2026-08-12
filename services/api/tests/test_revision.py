@@ -4,7 +4,7 @@ from uuid import uuid4, uuid5
 
 import pytest
 from campaign_contracts.api import RevisionResponse
-from campaign_contracts.artifacts import ImageArtifactReference
+from campaign_contracts.artifacts import AudioArtifactReference, ImageArtifactReference
 from campaign_contracts.campaign import (
     CampaignCopy,
     ChannelCopy,
@@ -92,6 +92,20 @@ def _image_artifacts(campaign_id, campaign_version, now):
         )
         for _ in range(3)
     ]
+
+
+def _voice_artifact(campaign_id, campaign_version, now):
+    return AudioArtifactReference(
+        artifact_id=uuid4(),
+        campaign_id=campaign_id,
+        campaign_version=campaign_version,
+        workflow_step=WorkflowStep.VOICEOVER,
+        mime_type="audio/mpeg",
+        size_bytes=4096,
+        checksum_sha256="b" * 64,
+        created_at=now,
+        provider="polly",
+    )
 
 
 NON_READY_FOR_REVIEW_STATUSES = [
@@ -369,10 +383,12 @@ def test_revision_storyboard_scope_reuses_strategy_and_copy(client, repository, 
     assert child.completed_steps == [WorkflowStep.STRATEGY, WorkflowStep.COPY]
 
 
-def test_revision_video_scope_reuses_strategy_copy_storyboard_and_all_images(
+def test_revision_video_scope_reuses_strategy_copy_storyboard_images_and_voice(
     client, repository, campaign_at_status, headers
 ):
-    images = _image_artifacts(uuid4(), 1, datetime.now(UTC))
+    now = datetime.now(UTC)
+    images = _image_artifacts(uuid4(), 1, now)
+    voice = _voice_artifact(uuid4(), 1, now)
     campaign_id, _ = asyncio.run(
         campaign_at_status(
             CampaignStatus.READY_FOR_REVIEW,
@@ -381,6 +397,7 @@ def test_revision_video_scope_reuses_strategy_copy_storyboard_and_all_images(
             storyboard=_storyboard(),
             image_prompts=_image_prompts(),
             image_artifacts=images,
+            voice_artifact=voice,
         )
     )
 
@@ -396,13 +413,39 @@ def test_revision_video_scope_reuses_strategy_copy_storyboard_and_all_images(
     assert child.storyboard == _storyboard()
     assert child.image_artifacts == images
     assert child.image_prompts == _image_prompts()
+    # A VIDEO-only revision must not re-trigger Polly synthesis: narration is unchanged.
+    assert child.voice_artifact == voice
     assert child.video_artifact is None
     assert child.completed_steps == [
         WorkflowStep.STRATEGY,
         WorkflowStep.COPY,
         WorkflowStep.STORYBOARD,
         WorkflowStep.IMAGES,
+        WorkflowStep.VOICEOVER,
     ]
+
+
+def test_revision_storyboard_scope_does_not_reuse_voice_artifact(client, repository, campaign_at_status, headers):
+    now = datetime.now(UTC)
+    voice = _voice_artifact(uuid4(), 1, now)
+    campaign_id, _ = asyncio.run(
+        campaign_at_status(
+            CampaignStatus.READY_FOR_REVIEW,
+            strategy=_strategy(),
+            copy=_copy(),
+            storyboard=_storyboard(),
+            voice_artifact=voice,
+        )
+    )
+
+    response = _revise(client, campaign_id, 1, headers, scope="STORYBOARD")
+
+    assert response.status_code == 202
+    record = asyncio.run(repository.get(campaign_id))
+    assert record is not None
+    child = record[1]
+    # STORYBOARD drives narration, so the previous voiceover must not carry forward.
+    assert child.voice_artifact is None
 
 
 def test_revision_does_not_inherit_approval_review_package_error_cancellation_fields(
