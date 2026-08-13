@@ -84,16 +84,17 @@ async def generate_copy(state: GraphState) -> GraphState:
 def _scene_narration(scene_number: int, brief: NormalizedCampaignBrief, strategy: StrategyOutput) -> str:
     # Deterministic, distinct-per-scene narration built from existing brief/
     # strategy fields (no LLM call). Sized so that three scenes' worth of text
-    # gives a real TTS engine enough content to plausibly produce audio near
-    # the 15s storyboard target, rather than three copies of one short phrase.
+    # gives a real TTS engine enough content to plausibly land in the middle
+    # of the storyboard's real duration constraint, with margin on both
+    # sides -- not just clearing the pre-render validation floor.
     if scene_number == 1:
-        return f"{brief.business_name} introduces {brief.product_or_service}, made with a {brief.tone.lower()} touch."
+        return f"{brief.business_name} introduces {brief.product_or_service}."
     if scene_number == 2:
         audience = strategy.audience.rstrip()
         suffix = "" if audience.endswith((".", "!", "?")) else "."
         return f"{strategy.key_message} Perfect for {audience}{suffix}"
     cta = brief.call_to_action or "Learn more"
-    return f"{cta} Explore {brief.product_or_service} from {brief.business_name} today."
+    return f"{cta} Explore {brief.product_or_service} from {brief.business_name}."
 
 
 async def create_storyboard(state: GraphState) -> GraphState:

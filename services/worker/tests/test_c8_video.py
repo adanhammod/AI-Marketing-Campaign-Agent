@@ -677,6 +677,65 @@ async def test_pipeline_rejects_audio_duration_just_below_scale_bound():
 
 
 @pytest.mark.asyncio
+async def test_pipeline_rejects_duration_inside_old_fixed_band_but_below_constraints_minimum():
+    # Regression test proving the pre-render check now derives its bounds
+    # from CampaignConstraints (13-17s for this 15s storyboard, i.e. scale
+    # [0.8667, 1.1333]) rather than the old fixed [0.85, 1.25] band. 12.9s
+    # gives scale 0.86 -- the OLD floor (0.85) would have accepted this,
+    # but it's below the real product minimum of 13s, so it must now be
+    # rejected here rather than only being caught by _validate_output after
+    # a full render.
+    version = _version()
+    s3 = _populated_s3(version)
+    store = S3ArtifactStore(s3, "private-bucket")
+
+    class _JustBelowConstraintsMinRunners(_RecordingRunners):
+        async def ffprobe(self, ffprobe_path, file_path, *, timeout_seconds, extra_args=None):
+            if str(file_path).endswith("voiceover.mp3"):
+                return {"format": {"duration": "12.9"}, "streams": [{"codec_type": "audio", "codec_name": "aac"}]}
+            return _VALID_VIDEO_PROBE
+
+    runners = _JustBelowConstraintsMinRunners()
+    pipeline = _pipeline(s3, store, runners)
+
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+    assert error.value.code == "ARTIFACT_VALIDATION_FAILED"
+    assert str(error.value) == "narration duration incompatible with storyboard timing"
+    assert error.value.retryable is False
+    assert runners.ffmpeg_calls == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rejects_duration_inside_old_fixed_band_but_above_constraints_maximum():
+    # Direct regression test for the real Luna production incident: the
+    # retargeted narration fix produced an 18.696s Polly voiceover against
+    # this 15s storyboard (scale 1.2464). The OLD fixed ceiling (1.25)
+    # would have accepted this and gone on to render (and, separately,
+    # time out) -- but 18.696s exceeds the real product maximum of 17s, so
+    # it must now be rejected here, before any ffmpeg render is attempted.
+    version = _version()
+    s3 = _populated_s3(version)
+    store = S3ArtifactStore(s3, "private-bucket")
+
+    class _JustAboveConstraintsMaxRunners(_RecordingRunners):
+        async def ffprobe(self, ffprobe_path, file_path, *, timeout_seconds, extra_args=None):
+            if str(file_path).endswith("voiceover.mp3"):
+                return {"format": {"duration": "18.696"}, "streams": [{"codec_type": "audio", "codec_name": "aac"}]}
+            return _VALID_VIDEO_PROBE
+
+    runners = _JustAboveConstraintsMaxRunners()
+    pipeline = _pipeline(s3, store, runners)
+
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+    assert error.value.code == "ARTIFACT_VALIDATION_FAILED"
+    assert str(error.value) == "narration duration incompatible with storyboard timing"
+    assert error.value.retryable is False
+    assert runners.ffmpeg_calls == []
+
+
+@pytest.mark.asyncio
 async def test_pipeline_maps_ffprobe_output_validation_failures():
     version = _version()
     s3 = _populated_s3(version)

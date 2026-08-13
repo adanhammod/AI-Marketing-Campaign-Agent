@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from campaign_contracts.api import CampaignCreationRequest
-from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata
+from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata, StrategyOutput
 from campaign_contracts.enums import CampaignStatus, ErrorComponent, StepStatus, WorkflowStep
 from campaign_contracts.errors import SanitizedWorkflowError
 from campaign_contracts.steps import WorkflowStepRecord
@@ -203,6 +203,42 @@ async def test_create_storyboard_narration_uses_fallbacks_when_optional_brief_fi
     assert "general audience" in narrations[1]
     # Falls back to campaign_goal when key_message is absent.
     assert brief.campaign_goal in narrations[1]
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_is_more_conservative_than_previous_luna_incident():
+    # Regression guard for a real production incident: the first iteration
+    # of this narration fix (commit e72bdd5) produced 44 words combined for
+    # this exact brief, which Polly measured at 18.696s -- outside the real
+    # 13-17s video duration constraint. This does NOT assert any specific
+    # duration (Polly timing is not a deterministic function of word count
+    # alone -- see the two real, non-linear data points from this incident);
+    # it only guards that the retargeted narration is shorter than that
+    # known over-length baseline for the same brief content.
+    brief = _short_message_brief()
+    state: GraphState = {"version": _version(brief=brief)}
+    strategized = await nodes.create_strategy(state)
+    result = await nodes.create_storyboard(strategized)
+    narrations = [scene.narration for scene in result["version"].storyboard.scenes]
+
+    combined_word_count = sum(len(n.split()) for n in narrations)
+    previous_luna_incident_word_count = 44
+    assert combined_word_count < previous_luna_incident_word_count
+
+
+def test_scene_narration_is_deterministic():
+    brief = _short_message_brief()
+    strategy = StrategyOutput(
+        audience="Young professionals and coffee lovers aged 22-40.",
+        positioning="Luna Coffee for Luna Cold Brew",
+        objective=brief.campaign_goal,
+        key_message=brief.key_message or brief.campaign_goal,
+        channel_rationale={},
+    )
+    first = [nodes._scene_narration(n, brief, strategy) for n in (1, 2, 3)]
+    second = [nodes._scene_narration(n, brief, strategy) for n in (1, 2, 3)]
+    assert first == second
+    assert len(set(first)) == 3
 
 
 async def _version_with_storyboard(**overrides) -> CampaignVersion:

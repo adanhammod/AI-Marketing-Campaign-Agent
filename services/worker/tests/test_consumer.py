@@ -503,6 +503,13 @@ async def test_health_is_non_consuming_and_shutdown_stops_receive():
     assert queue.receives == 0
 
 
+def test_video_render_timeout_defaults_to_120_seconds():
+    # The real ffmpeg render for a 3-scene 1080x1920 video was measured at
+    # ~80.6s (CPU-only libx264 encoding); 60s was too tight. 120s gives
+    # comfortable margin.
+    assert Settings().video_render_timeout_seconds == 120
+
+
 def test_settings_validation(monkeypatch):
     settings().validate()
     for value in (

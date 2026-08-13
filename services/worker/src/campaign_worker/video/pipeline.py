@@ -7,7 +7,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid5
 
 from campaign_contracts.artifacts import AudioArtifactReference, ImageArtifactReference, VideoArtifactReference
-from campaign_contracts.campaign import CampaignVersion, Storyboard
+from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, Storyboard
 from campaign_contracts.enums import WorkflowStep
 
 from campaign_worker.errors import WorkflowOperationError
@@ -19,8 +19,6 @@ from .ffmpeg_runner import run_ffmpeg, run_ffprobe
 from .models import RenderedVideo
 
 _RENDER_SETTINGS_VERSION = 1
-_MIN_SCALE = 0.85
-_MAX_SCALE = 1.25
 _TARGET_WIDTH = 1080
 _TARGET_HEIGHT = 1920
 _TARGET_FPS = 30
@@ -130,7 +128,7 @@ class FfmpegVideoPipeline:
                 self._ffprobe_path, str(audio_path), timeout_seconds=self._render_timeout_seconds
             )
             audio_duration = float(audio_probe["format"]["duration"])
-            scene_durations = self._scaled_scene_durations(scenes, audio_duration)
+            scene_durations = self._scaled_scene_durations(scenes, audio_duration, version.constraints)
 
             output_path = tmp_path / "final.mp4"
             args = build_render_args(
@@ -200,10 +198,19 @@ class FfmpegVideoPipeline:
         destination.write_bytes(data)
 
     @staticmethod
-    def _scaled_scene_durations(scenes: list[Any], audio_duration: float) -> list[float]:
+    def _scaled_scene_durations(
+        scenes: list[Any], audio_duration: float, constraints: CampaignConstraints
+    ) -> list[float]:
+        # Bounds are derived from CampaignConstraints (the authoritative
+        # product duration requirement, also enforced post-render by
+        # _validate_output) rather than a fixed scale band, so narration
+        # that would fail validation is rejected here -- before paying for
+        # a full ffmpeg render -- instead of only being caught afterward.
         total = sum(scene.duration_seconds for scene in scenes)
+        min_scale = constraints.min_duration_seconds / total
+        max_scale = constraints.max_duration_seconds / total
         scale = audio_duration / total
-        if not (_MIN_SCALE <= scale <= _MAX_SCALE):
+        if not (min_scale <= scale <= max_scale):
             raise WorkflowOperationError(
                 "ARTIFACT_VALIDATION_FAILED",
                 "narration duration incompatible with storyboard timing",
