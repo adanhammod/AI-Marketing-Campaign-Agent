@@ -4,6 +4,8 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+from pydantic import AnyUrl
+
 from .campaign import (
     ApprovalRecord,
     CampaignAggregateMetadata,
@@ -57,6 +59,8 @@ def _ddb(value: Any) -> Any:
         return str(value)
     if isinstance(value, Enum):
         return value.value
+    if isinstance(value, AnyUrl):
+        return str(value)
     if isinstance(value, list):
         return [_ddb(x) for x in value]
     if isinstance(value, dict):

@@ -6,13 +6,24 @@ import pytest
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from botocore.exceptions import ClientError
 from campaign_contracts.api import CampaignCreationRequest
+from campaign_contracts.artifacts import ArtifactAttribution, ImageArtifactReference
 from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignConstraints, CampaignVersion, RetryMetadata
 from campaign_contracts.dynamodb import meta_sk, pk, serialize_meta, serialize_version, version_sk
-from campaign_contracts.enums import Actor, CampaignEventType, CampaignStatus, SQSOperation, StepStatus, WorkflowStep
+from campaign_contracts.enums import (
+    Actor,
+    CampaignEventType,
+    CampaignStatus,
+    ErrorComponent,
+    SQSOperation,
+    StepStatus,
+    WorkflowStep,
+)
+from campaign_contracts.errors import SanitizedWorkflowError
 from campaign_contracts.events import CampaignEvent
 from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.steps import WorkflowStepRecord
 from moto import mock_aws
+from pydantic import HttpUrl
 
 from campaign_worker.errors import LeaseConflict, LeaseLost, PersistenceUnavailable
 from campaign_worker.repositories.dynamodb_workflow_repository import DynamoDBWorkflowRepository
@@ -192,6 +203,87 @@ async def test_save_version_persists_content(database):
 
     reloaded = await repository.load_version(message)
     assert reloaded.status == CampaignStatus.READY_FOR_REVIEW
+
+
+def _pexels_attribution() -> ArtifactAttribution:
+    return ArtifactAttribution(
+        provider_asset_id="123",
+        creator_name="Creator",
+        creator_profile_url="https://www.pexels.com/@creator",
+        source_page_url="https://www.pexels.com/photo/example-123/",
+        provider_url="https://www.pexels.com",
+        attribution_text="Photo by Creator on Pexels",
+    )
+
+
+def _image_artifact(loaded: CampaignVersion, now: datetime) -> ImageArtifactReference:
+    return ImageArtifactReference(
+        artifact_id=uuid4(),
+        campaign_id=loaded.campaign_id,
+        campaign_version=loaded.campaign_version,
+        workflow_step=WorkflowStep.IMAGES,
+        mime_type="image/jpeg",
+        size_bytes=42,
+        checksum_sha256="a" * 64,
+        created_at=now,
+        provider="pexels",
+        scene_number=1,
+        attribution=_pexels_attribution(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_version_persists_image_artifacts_with_http_url_attribution(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    artifact = _image_artifact(loaded, now)
+    updated = loaded.model_copy(update={"image_artifacts": [artifact]})
+
+    await repository.save_version(updated, lease)
+
+    raw = client.get_item(TableName=TABLE, Key=marshal({"PK": pk(message.campaign_id), "SK": version_sk(1)}))["Item"]
+    stored_url = raw["image_artifacts"]["L"][0]["M"]["attribution"]["M"]["creator_profile_url"]
+    assert stored_url == {"S": "https://www.pexels.com/@creator"}
+
+    reloaded = await repository.load_version(message)
+    assert reloaded.image_artifacts[0].attribution.creator_profile_url == HttpUrl("https://www.pexels.com/@creator")
+
+
+@pytest.mark.asyncio
+async def test_save_version_persists_failed_version_with_image_artifacts(database):
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    artifact = _image_artifact(loaded, now)
+    error = SanitizedWorkflowError(
+        code="STORAGE_UNAVAILABLE",
+        message="artifact reconciliation unavailable",
+        component=ErrorComponent.LANGGRAPH_WORKER,
+        workflow_step=WorkflowStep.IMAGES,
+        attempt=1,
+        retryable=True,
+        timestamp=now,
+        correlation_id=uuid4(),
+        campaign_id=loaded.campaign_id,
+        campaign_version=loaded.campaign_version,
+        job_id=loaded.job_id,
+    )
+    failed = loaded.model_copy(update={"image_artifacts": [artifact], "status": CampaignStatus.FAILED, "error": error})
+
+    # Must not raise -- mirrors the failure-persistence path (job_processor._fail ->
+    # handle_failure -> save_version), which crashed on this same HttpUrl-bearing
+    # version before the _ddb() fix.
+    await repository.save_version(failed, lease)
+
+    reloaded = await repository.load_version(message)
+    assert reloaded.status == CampaignStatus.FAILED
+    assert reloaded.error is not None
+    assert reloaded.error.code == "STORAGE_UNAVAILABLE"
 
 
 @pytest.mark.asyncio

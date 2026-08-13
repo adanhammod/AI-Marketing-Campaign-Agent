@@ -2,8 +2,10 @@ import json
 from datetime import datetime,timezone
 from decimal import Decimal
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID,uuid4
 import pytest
+from pydantic import HttpUrl
+from campaign_contracts.artifacts import ArtifactAttribution,ImageArtifactReference
 from campaign_contracts.campaign import CampaignAggregateMetadata,CampaignVersion
 from campaign_contracts.dynamodb import approval_sk,event_sk,meta_sk,pk,serialize_event,serialize_meta,serialize_step,serialize_version,step_sk,version_sk,_ddb
 from campaign_contracts.enums import CampaignStatus,StepStatus,WorkflowStep
@@ -22,3 +24,17 @@ def test_keys_and_serialization(tmp_path):
     with pytest.raises(TypeError):_ddb(1.2)
 def test_event_serialize_and_schema_stability(tmp_path):
     event=CampaignEvent.model_validate(load('events.json')[0]); assert serialize_event(event)['SK'].startswith('EVENT#'); first=generate(tmp_path); snapshots={p.name:p.read_bytes() for p in first}; second=generate(tmp_path); assert snapshots=={p.name:p.read_bytes() for p in second}; assert len(first)==8
+def test_ddb_converts_http_url_to_string():
+    converted=_ddb(HttpUrl('https://www.pexels.com/@creator'))
+    assert converted=='https://www.pexels.com/@creator'
+    assert isinstance(converted,str)
+def test_serialize_version_converts_nested_http_url_fields():
+    version=CampaignVersion.model_validate(load('queued-campaign.json'))
+    attribution=ArtifactAttribution(provider_asset_id='123',creator_name='Creator',creator_profile_url='https://www.pexels.com/@creator',source_page_url='https://www.pexels.com/photo/example-123/',provider_url='https://www.pexels.com',attribution_text='Photo by Creator on Pexels')
+    artifact=ImageArtifactReference(artifact_id=uuid4(),campaign_id=version.campaign_id,campaign_version=version.campaign_version,workflow_step=WorkflowStep.IMAGES,mime_type='image/jpeg',size_bytes=42,checksum_sha256='a'*64,created_at=datetime.now(timezone.utc),provider='pexels',scene_number=1,attribution=attribution)
+    updated=version.model_copy(update={'image_artifacts':[artifact]})
+    item=serialize_version(updated)
+    stored=item['image_artifacts'][0]['attribution']['creator_profile_url']
+    assert stored=='https://www.pexels.com/@creator'
+    assert isinstance(stored,str)
+    assert not any(isinstance(x,float) for x in item.values())
