@@ -8,6 +8,7 @@ from campaign_contracts.campaign import (
     CampaignVersion,
     ChannelCopy,
     ImagePrompt,
+    NormalizedCampaignBrief,
     ReviewPackage,
     Storyboard,
     StoryboardScene,
@@ -80,6 +81,21 @@ async def generate_copy(state: GraphState) -> GraphState:
     return {"version": version.model_copy(update={"campaign_copy": copy})}
 
 
+def _scene_narration(scene_number: int, brief: NormalizedCampaignBrief, strategy: StrategyOutput) -> str:
+    # Deterministic, distinct-per-scene narration built from existing brief/
+    # strategy fields (no LLM call). Sized so that three scenes' worth of text
+    # gives a real TTS engine enough content to plausibly produce audio near
+    # the 15s storyboard target, rather than three copies of one short phrase.
+    if scene_number == 1:
+        return f"{brief.business_name} introduces {brief.product_or_service}, made with a {brief.tone.lower()} touch."
+    if scene_number == 2:
+        audience = strategy.audience.rstrip()
+        suffix = "" if audience.endswith((".", "!", "?")) else "."
+        return f"{strategy.key_message} Perfect for {audience}{suffix}"
+    cta = brief.call_to_action or "Learn more"
+    return f"{cta} Explore {brief.product_or_service} from {brief.business_name} today."
+
+
 async def create_storyboard(state: GraphState) -> GraphState:
     version = state["version"]
     strategy = version.strategy
@@ -90,7 +106,7 @@ async def create_storyboard(state: GraphState) -> GraphState:
             scene_number=index,
             purpose=f"Scene {index} for {strategy.objective}",
             duration_seconds=5,
-            narration=strategy.key_message,
+            narration=_scene_narration(index, version.brief, strategy),
             visual_prompt=f"{version.brief.product_or_service}, scene {index}",
             transition="cut",
         )

@@ -139,6 +139,72 @@ async def test_create_storyboard_produces_three_scenes_totaling_valid_duration()
     assert 13 <= storyboard.total_duration_seconds <= 17
 
 
+def _short_message_brief(**overrides):
+    defaults = dict(
+        business_name="Luna Coffee",
+        product_or_service="Luna Cold Brew",
+        business_description="Luna Coffee offers small-batch cold brew roasted weekly for local cafes.",
+        campaign_goal="Promote our new premium coffee collection and increase online sales.",
+        platforms=["instagram", "tiktok"],
+        tone="Warm, modern, premium",
+        language="en-US",
+        target_audience="Young professionals and coffee lovers aged 22-40.",
+        key_message="Premium coffee that turns your everyday morning into a special moment.",
+        call_to_action="Discover the collection.",
+    )
+    defaults.update(overrides)
+    return CampaignCreationRequest(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_generates_distinct_narration_for_short_key_message():
+    # Regression test for the bug where all three scenes got the exact same
+    # short strategy.key_message as narration, which produced Polly audio
+    # too short to satisfy the video pipeline's duration-scale validation.
+    brief = _short_message_brief()
+    state: GraphState = {"version": _version(brief=brief)}
+    strategized = await nodes.create_strategy(state)
+    result = await nodes.create_storyboard(strategized)
+    storyboard = result["version"].storyboard
+    assert storyboard is not None
+
+    narrations = [scene.narration for scene in storyboard.scenes]
+
+    # No longer three identical copies of key_message.
+    assert len(set(narrations)) == 3
+    for narration in narrations:
+        assert narration != brief.key_message
+
+    # Combined narration should be meaningfully longer than the old
+    # 3x-key_message-repeat baseline, giving a real TTS engine enough
+    # content to plausibly land near the 15s storyboard target.
+    combined_word_count = sum(len(n.split()) for n in narrations)
+    baseline_word_count = len((brief.key_message or "").split()) * 3
+    assert combined_word_count > baseline_word_count
+
+    # Each scene's narration should reference real brief/strategy content,
+    # not be boilerplate/empty.
+    assert brief.business_name in narrations[0]
+    assert brief.product_or_service in narrations[0]
+    assert brief.key_message in narrations[1]
+    assert (brief.call_to_action or "Learn more") in narrations[2]
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_uses_fallbacks_when_optional_brief_fields_absent():
+    brief = _short_message_brief(key_message=None, call_to_action=None, target_audience=None)
+    state: GraphState = {"version": _version(brief=brief)}
+    strategized = await nodes.create_strategy(state)
+    result = await nodes.create_storyboard(strategized)
+    narrations = [scene.narration for scene in result["version"].storyboard.scenes]
+
+    assert len(set(narrations)) == 3
+    assert "Learn more" in narrations[2]
+    assert "general audience" in narrations[1]
+    # Falls back to campaign_goal when key_message is absent.
+    assert brief.campaign_goal in narrations[1]
+
+
 async def _version_with_storyboard(**overrides) -> CampaignVersion:
     state: GraphState = {"version": _version(**overrides)}
     strategized = await nodes.create_strategy(state)

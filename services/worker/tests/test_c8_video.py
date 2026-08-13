@@ -648,6 +648,35 @@ async def test_pipeline_rejects_audio_duration_outside_scale_bound():
 
 
 @pytest.mark.asyncio
+async def test_pipeline_rejects_audio_duration_just_below_scale_bound():
+    # Regression test for a real production incident: a 3x-repeated short
+    # key_message narration produced 11.856s of Polly audio against a 15s
+    # storyboard (scale = 11.856/15 = 0.7904), narrowly missing the 0.85
+    # floor. The prior test suite only covered a comfortably in-bound scale
+    # (0.9) and a grossly out-of-bound one (0.2); this locks in behavior at
+    # the actual boundary that broke in production.
+    version = _version()
+    s3 = _populated_s3(version)
+    store = S3ArtifactStore(s3, "private-bucket")
+
+    class _NearMissRunners(_RecordingRunners):
+        async def ffprobe(self, ffprobe_path, file_path, *, timeout_seconds, extra_args=None):
+            if str(file_path).endswith("voiceover.mp3"):
+                return {"format": {"duration": "11.856"}, "streams": [{"codec_type": "audio", "codec_name": "aac"}]}
+            return _VALID_VIDEO_PROBE
+
+    runners = _NearMissRunners()
+    pipeline = _pipeline(s3, store, runners)
+
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+    assert error.value.code == "ARTIFACT_VALIDATION_FAILED"
+    assert str(error.value) == "narration duration incompatible with storyboard timing"
+    assert error.value.retryable is False
+    assert runners.ffmpeg_calls == []
+
+
+@pytest.mark.asyncio
 async def test_pipeline_maps_ffprobe_output_validation_failures():
     version = _version()
     s3 = _populated_s3(version)
