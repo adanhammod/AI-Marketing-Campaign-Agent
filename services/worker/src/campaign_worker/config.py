@@ -19,7 +19,7 @@ class Settings:
     polly_engine: str = "neural"
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
-    video_render_timeout_seconds: float = 120
+    video_render_timeout_seconds: float = 240
     video_max_download_bytes: int = 50_000_000
     package_max_bytes: int = 52_428_800
     table_name: str | None = None
@@ -90,7 +90,7 @@ class Settings:
             polly_engine=os.getenv("POLLY_ENGINE", "neural"),
             ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg"),
             ffprobe_path=os.getenv("FFPROBE_PATH", "ffprobe"),
-            video_render_timeout_seconds=float(os.getenv("VIDEO_RENDER_TIMEOUT_SECONDS", "120")),
+            video_render_timeout_seconds=float(os.getenv("VIDEO_RENDER_TIMEOUT_SECONDS", "240")),
             video_max_download_bytes=int(os.getenv("VIDEO_MAX_DOWNLOAD_BYTES", "50000000")),
             package_max_bytes=int(os.getenv("PACKAGE_MAX_BYTES", "52428800")),
             wait_time_seconds=int(os.getenv("SQS_WAIT_TIME_SECONDS", "20")),
