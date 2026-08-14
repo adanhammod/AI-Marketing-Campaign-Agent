@@ -57,11 +57,20 @@ export const campaignCreationAcceptedFixture = {
   links: {},
 }
 
+export const campaignArtifactsFixture = {
+  campaign_id: '11111111-1111-4111-8111-111111111111',
+  campaign_version: 1,
+  items: [],
+}
+
 export const handlers = [
   http.get('/api/v1/campaigns', () =>
     HttpResponse.json({ items: [campaignSummaryFixture], next_cursor: null }),
   ),
   http.get('/api/v1/campaigns/:campaignId', () => HttpResponse.json(campaignDetailFixture)),
+  http.get('/api/v1/campaigns/:campaignId/artifacts', () =>
+    HttpResponse.json(campaignArtifactsFixture),
+  ),
   http.post('/api/v1/campaigns', () =>
     HttpResponse.json(campaignCreationAcceptedFixture, { status: 202 }),
   ),
