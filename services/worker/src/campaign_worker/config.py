@@ -17,6 +17,7 @@ class Settings:
     image_max_download_bytes: int = 25_000_000
     polly_voice_id: str | None = None
     polly_engine: str = "neural"
+    audio_normalize_timeout_seconds: float = 30
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
     video_render_timeout_seconds: float = 240
@@ -63,6 +64,15 @@ class Settings:
     def validate_voice_pipeline(self) -> None:
         if self.polly_engine not in {"standard", "neural", "long-form", "generative"}:
             raise ConfigurationError("Polly engine must be one of standard, neural, long-form, generative")
+        if self.audio_normalize_timeout_seconds <= 0:
+            raise ConfigurationError("audio normalize timeout must be positive")
+        # Loudness normalization shells out to ffmpeg after Polly synthesis
+        # (see audio/normalizer.py), so voiceover generation now hard-requires
+        # ffmpeg on PATH -- fail fast at startup rather than surfacing this as
+        # a confusing per-job runtime failure. Unlike validate_video_pipeline(),
+        # there is no mock/degraded fallback mode for voice.
+        if shutil.which(self.ffmpeg_path) is None:
+            raise ConfigurationError(f"ffmpeg binary '{self.ffmpeg_path}' was not found on PATH")
 
     def validate_video_pipeline(self) -> None:
         if shutil.which(self.ffmpeg_path) is None:
@@ -88,6 +98,7 @@ class Settings:
             image_max_download_bytes=int(os.getenv("IMAGE_MAX_DOWNLOAD_BYTES", "25000000")),
             polly_voice_id=os.getenv("POLLY_VOICE_ID"),
             polly_engine=os.getenv("POLLY_ENGINE", "neural"),
+            audio_normalize_timeout_seconds=float(os.getenv("AUDIO_NORMALIZE_TIMEOUT_SECONDS", "30")),
             ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg"),
             ffprobe_path=os.getenv("FFPROBE_PATH", "ffprobe"),
             video_render_timeout_seconds=float(os.getenv("VIDEO_RENDER_TIMEOUT_SECONDS", "240")),

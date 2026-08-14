@@ -7,6 +7,7 @@ import httpx
 import uvicorn
 from botocore.config import Config  # type: ignore[import-untyped]
 
+from .audio.normalizer import AudioNormalizer
 from .audio.pipeline import PollyVoicePipeline
 from .audio.processor import AudioProcessor
 from .config import Settings
@@ -70,6 +71,10 @@ def build_consumer(
             polly,
             artifact_store,
             AudioProcessor(),
+            AudioNormalizer(
+                ffmpeg_path=settings.ffmpeg_path,
+                timeout_seconds=settings.audio_normalize_timeout_seconds,
+            ),
             voice_id=settings.polly_voice_id,
             engine=settings.polly_engine,
         )

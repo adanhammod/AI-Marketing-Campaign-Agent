@@ -2,6 +2,7 @@ import hashlib
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid5
+from xml.sax.saxutils import escape as xml_escape
 
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 from campaign_contracts.artifacts import AudioArtifactReference
@@ -12,9 +13,26 @@ from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.graph.boundary import NodeCancelled
 from campaign_worker.storage.artifact_store import AudioArtifactStore, StoredAudio
 
+from .normalizer import AudioNormalizer
 from .processor import AudioProcessor
 
 MAX_NARRATION_CHARS = 3000
+
+# Bump-on-change: any change to how synthesis behaves for a given
+# narration+voice+engine (SSML shape, pacing, normalization targets) must
+# invalidate previously-reconciled artifacts. Mirrors video/pipeline.py's
+# _RENDER_SETTINGS_VERSION precedent. Deliberately kept under the existing
+# "narration_fingerprint" metadata key (not renamed) -- reconcile_audio()
+# only ever does an opaque string-equality check on that key's value, so
+# widening what it hashes is sufficient for correctness without touching
+# storage/s3_artifact_store.py or any metadata-dict test fixture's keys.
+_VOICE_SYNTHESIS_VERSION = 1
+
+# Fixed pause between each of the 3 scenes' narration, inserted as SSML
+# <break> tags. `<break>` has full support on the neural engine; `<prosody>`
+# is only partially supported (no pitch) and `<emphasis>` isn't supported at
+# all, so pacing is the only prosody lever used in v1.
+_SSML_BREAK_MS = 350
 
 _DEFAULT_VOICE_BY_LANGUAGE: dict[str, str] = {
     "en": "Joanna",
@@ -24,6 +42,21 @@ _DEFAULT_VOICE_BY_LANGUAGE: dict[str, str] = {
     "it": "Bianca",
     "pt": "Camila",
 }
+
+
+def _synthesis_fingerprint(narration_text: str, voice_id: str, engine: str) -> str:
+    payload = f"{narration_text}|{voice_id}|{engine}|v{_VOICE_SYNTHESIS_VERSION}"
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _build_ssml(scene_narrations: list[str]) -> str:
+    # Each scene's narration is plain prose (no markup), so escaping each one
+    # independently before joining is equivalent to escaping the individual
+    # brief/strategy fields it was built from -- and much simpler, since it
+    # doesn't require threading escaping logic into graph/nodes.py.
+    escaped_scenes = [xml_escape(text) for text in scene_narrations]
+    body = f'<break time="{_SSML_BREAK_MS}ms"/>'.join(escaped_scenes)
+    return f"<speak>{body}</speak>"
 
 
 def deterministic_voice_artifact_id(campaign_id: UUID, campaign_version: int) -> UUID:
@@ -42,6 +75,7 @@ class PollyVoicePipeline:
         client: Any,
         store: AudioArtifactStore,
         processor: AudioProcessor,
+        normalizer: AudioNormalizer,
         *,
         voice_id: str | None = None,
         engine: str = "neural",
@@ -49,6 +83,7 @@ class PollyVoicePipeline:
         self._client = client
         self._store = store
         self._processor = processor
+        self._normalizer = normalizer
         self._voice_id = voice_id
         self._engine = engine
 
@@ -63,18 +98,20 @@ class PollyVoicePipeline:
             raise WorkflowOperationError(
                 "ARTIFACT_VALIDATION_FAILED", "narration exceeds the supported synthesis length", retryable=False
             )
-        fingerprint = hashlib.sha256(narration_text.encode()).hexdigest()
+
+        voice_id = self._resolve_voice_id(version.brief.language)
+        fingerprint = _synthesis_fingerprint(narration_text, voice_id, self._engine)
 
         reconciled = self._store.reconcile_audio(version, fingerprint)
         if reconciled is not None:
             return self._reference(version, reconciled)
 
-        voice_id = self._resolve_voice_id(version.brief.language)
-
         await self._checkpoint(is_cancelled, "before_polly")
-        audio_bytes = self._synthesize(narration_text, voice_id)
+        ssml_text = _build_ssml([scene.narration for scene in storyboard.scenes])
+        audio_bytes = self._synthesize(ssml_text, voice_id)
+        normalized_loudness = await self._normalizer.normalize(audio_bytes)
         await self._checkpoint(is_cancelled, "before_validation")
-        normalized = self._processor.validate(audio_bytes)
+        normalized = self._processor.validate(normalized_loudness.data)
         await self._checkpoint(is_cancelled, "before_s3_upload")
         metadata = {
             "campaign_id": str(version.campaign_id),
@@ -84,6 +121,14 @@ class PollyVoicePipeline:
             "polly_engine": self._engine,
             "language_code": version.brief.language,
             "checksum_sha256": normalized.checksum_sha256,
+            "text_type": "ssml",
+            "ssml_break_ms": _SSML_BREAK_MS,
+            "synthesis_version": _VOICE_SYNTHESIS_VERSION,
+            "normalization_applied": True,
+            "target_lufs": self._normalizer.target_lufs,
+            "true_peak_ceiling_dbtp": self._normalizer.true_peak_ceiling_dbtp,
+            "measured_integrated_lufs": normalized_loudness.measured_integrated_lufs,
+            "measured_true_peak_dbtp": normalized_loudness.measured_true_peak_dbtp,
         }
         stored = self._store.put_audio(version, normalized, metadata)
         return self._reference(version, stored)
@@ -104,7 +149,7 @@ class PollyVoicePipeline:
     def _synthesize(self, text: str, voice_id: str) -> bytes:
         try:
             response = self._client.synthesize_speech(
-                Text=text, VoiceId=voice_id, Engine=self._engine, OutputFormat="mp3"
+                Text=text, VoiceId=voice_id, Engine=self._engine, OutputFormat="mp3", TextType="ssml"
             )
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
@@ -123,6 +168,11 @@ class PollyVoicePipeline:
                 "InvalidSampleRateException",
                 "LanguageNotSupportedException",
                 "TextLengthExceededException",
+                # Defense-in-depth alongside per-scene XML escaping (_build_ssml):
+                # a malformed-SSML business/product/message field is a
+                # deterministic input problem, not a transient provider issue,
+                # so it must not be retried.
+                "InvalidSsmlException",
             }:
                 raise WorkflowOperationError(
                     "VOICE_PROVIDER_UNAVAILABLE", "Polly rejected the request", retryable=False

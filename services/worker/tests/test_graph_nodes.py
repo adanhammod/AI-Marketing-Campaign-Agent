@@ -200,8 +200,9 @@ async def test_create_storyboard_narration_uses_fallbacks_when_optional_brief_fi
 
     assert len(set(narrations)) == 3
     assert "Learn more" in narrations[2]
-    assert "general audience" in narrations[1]
-    # Falls back to campaign_goal when key_message is absent.
+    # Falls back to campaign_goal when key_message is absent. Note:
+    # target_audience is intentionally never narrated (see _scene_narration),
+    # so there is no "general audience" fallback to assert here anymore.
     assert brief.campaign_goal in narrations[1]
 
 
@@ -224,6 +225,21 @@ async def test_create_storyboard_narration_is_more_conservative_than_previous_lu
     combined_word_count = sum(len(n.split()) for n in narrations)
     previous_luna_incident_word_count = 44
     assert combined_word_count < previous_luna_incident_word_count
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_never_narrates_raw_target_audience_verbatim():
+    # Regression guard for the real Luna incident: narration must never
+    # splice a raw demographic/targeting-spec string (e.g. "aged 22-40")
+    # into spoken ad copy, for any brief -- not just Luna's specific wording.
+    brief = _short_message_brief()
+    state: GraphState = {"version": _version(brief=brief)}
+    strategized = await nodes.create_strategy(state)
+    result = await nodes.create_storyboard(strategized)
+    narrations = [scene.narration for scene in result["version"].storyboard.scenes]
+    assert brief.target_audience is not None
+    for narration in narrations:
+        assert brief.target_audience not in narration
 
 
 def test_scene_narration_is_deterministic():

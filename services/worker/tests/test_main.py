@@ -24,6 +24,14 @@ def _settings(**overrides):
         artifact_bucket="campaign-artifacts",
         pexels_api_key="test-key",
         bedrock_image_query_model_id="test-model",
+        # sys.executable is guaranteed to exist and be executable in any test
+        # environment, standing in for a real ffmpeg/ffprobe binary purely
+        # for availability detection. The voice pipeline now hard-requires
+        # ffmpeg too (loudness normalization), so this must default to an
+        # available path for the many tests below that expect a fully-wired
+        # real (non-mock) asset pipeline to construct successfully.
+        ffmpeg_path=sys.executable,
+        ffprobe_path=sys.executable,
     )
     defaults.update(overrides)
     return Settings(**defaults)
@@ -114,17 +122,23 @@ def test_build_consumer_wires_a_real_ffmpeg_video_pipeline_when_ffmpeg_is_availa
     assert isinstance(consumer._processor._video_provider, FfmpegVideoPipeline)
 
 
-def test_build_consumer_falls_back_to_mock_video_provider_when_ffmpeg_is_unavailable():
+def test_build_consumer_raises_when_ffmpeg_is_unavailable_for_the_voice_pipeline():
+    # ffmpeg/ffprobe paths are shared by both pipelines, and loudness
+    # normalization (audio/normalizer.py) now makes ffmpeg a hard dependency
+    # of voiceover generation too. Unlike video's MockVideoProvider fallback,
+    # there is no degraded mode for voice -- so when ffmpeg is unavailable,
+    # build_consumer fails fast at startup (validate_voice_pipeline) instead
+    # of silently pairing a real voiceover with a fake/mock video.
     settings = _settings(ffmpeg_path="/nonexistent/ffmpeg-xyz", ffprobe_path="/nonexistent/ffprobe-xyz")
-    consumer = build_consumer(
-        settings,
-        sqs_client=object(),
-        dynamodb_client=object(),
-        bedrock_client=object(),
-        s3_client=object(),
-        polly_client=object(),
-    )
-    assert isinstance(consumer._processor._video_provider, MockVideoProvider)
+    with pytest.raises(ConfigurationError):
+        build_consumer(
+            settings,
+            sqs_client=object(),
+            dynamodb_client=object(),
+            bedrock_client=object(),
+            s3_client=object(),
+            polly_client=object(),
+        )
 
 
 def test_build_consumer_falls_back_to_mock_video_provider_when_asset_pipeline_is_not_configured():

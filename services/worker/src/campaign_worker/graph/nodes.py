@@ -83,18 +83,21 @@ async def generate_copy(state: GraphState) -> GraphState:
 
 def _scene_narration(scene_number: int, brief: NormalizedCampaignBrief, strategy: StrategyOutput) -> str:
     # Deterministic, distinct-per-scene narration built from existing brief/
-    # strategy fields (no LLM call). Sized so that three scenes' worth of text
-    # gives a real TTS engine enough content to plausibly land in the middle
-    # of the storyboard's real duration constraint, with margin on both
-    # sides -- not just clearing the pre-render validation floor.
+    # strategy fields (no LLM call). Scene 2 deliberately does not narrate
+    # strategy.audience: it's a targeting spec (e.g. "aged 22-40"), not ad
+    # copy -- no real 15-second ad reads a demographic aloud, and narrating
+    # it verbatim caused the real Luna production incident's flat,
+    # read-aloud delivery. Sized so combined narration lands safely inside
+    # the storyboard's 13-17s constraint with margin for the SSML pacing
+    # breaks inserted between scenes during synthesis (audio/pipeline.py).
     if scene_number == 1:
-        return f"{brief.business_name} introduces {brief.product_or_service}."
+        return f"Meet {brief.product_or_service}, made by {brief.business_name}."
     if scene_number == 2:
-        audience = strategy.audience.rstrip()
-        suffix = "" if audience.endswith((".", "!", "?")) else "."
-        return f"{strategy.key_message} Perfect for {audience}{suffix}"
+        key_message = strategy.key_message.rstrip()
+        suffix = "" if key_message.endswith((".", "!", "?")) else "."
+        return f"{key_message}{suffix} You'll love it, too."
     cta = brief.call_to_action or "Learn more"
-    return f"{cta} Explore {brief.product_or_service} from {brief.business_name}."
+    return f"{cta} Explore {brief.product_or_service} from {brief.business_name} today."
 
 
 async def create_storyboard(state: GraphState) -> GraphState:

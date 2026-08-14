@@ -1,6 +1,8 @@
+import asyncio
 import hashlib
 import io
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -9,6 +11,7 @@ from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata, Storyboard, StoryboardScene
 from campaign_contracts.enums import CampaignStatus, WorkflowStep
 
+from campaign_worker.audio.normalizer import AudioNormalizer
 from campaign_worker.audio.pipeline import PollyVoicePipeline, deterministic_voice_artifact_id
 from campaign_worker.audio.processor import AudioProcessor
 from campaign_worker.errors import WorkflowOperationError
@@ -224,11 +227,49 @@ class _Polly:
         return {"AudioStream": io.BytesIO(self.audio)}
 
 
-def _pipeline(polly=None, store=None, **overrides) -> PollyVoicePipeline:
+_LOUDNORM_STDERR = """
+{
+\t"input_i" : "-24.53",
+\t"input_tp" : "-7.97",
+\t"input_lra" : "0.90",
+\t"input_thresh" : "-34.78",
+\t"output_i" : "-16.20",
+\t"output_tp" : "-1.50",
+\t"output_lra" : "1.20",
+\t"output_thresh" : "-26.44",
+\t"normalization_type" : "dynamic",
+\t"target_offset" : "0.20"
+}
+"""
+
+
+class _PassthroughNormalizerRunner:
+    """Fake AudioNormalizer ffmpeg_runner: echoes input bytes through unchanged,
+    with canned loudnorm stats -- keeps PollyVoicePipeline tests independent
+    of a real ffmpeg binary, matching test_audio_normalizer.py's conventions.
+    """
+
+    async def __call__(self, ffmpeg_path, args, *, timeout_seconds, unavailable_code="VIDEO_PROVIDER_UNAVAILABLE"):
+        input_path = args[args.index("-i") + 1]
+        output_path = args[-1]
+
+        def _copy() -> None:
+            Path(output_path).write_bytes(Path(input_path).read_bytes())
+
+        await asyncio.to_thread(_copy)
+        return _LOUDNORM_STDERR
+
+
+def _normalizer() -> AudioNormalizer:
+    return AudioNormalizer(ffmpeg_runner=_PassthroughNormalizerRunner())
+
+
+def _pipeline(polly=None, store=None, normalizer=None, **overrides) -> PollyVoicePipeline:
     return PollyVoicePipeline(
         polly or _Polly(),
         store or S3ArtifactStore(_S3(), "private-bucket"),
         AudioProcessor(),
+        normalizer or _normalizer(),
         voice_id=overrides.get("voice_id"),
         engine=overrides.get("engine", "neural"),
     )
@@ -245,12 +286,15 @@ async def test_pipeline_synthesizes_and_stores_new_voiceover():
     assert artifact.provider == "polly"
     assert artifact.artifact_id == deterministic_voice_artifact_id(version.campaign_id, version.campaign_version)
     call = polly.calls[0]
-    assert (
-        call["Text"] == "Fresh coffee delivered weekly. Fresh coffee delivered weekly. Fresh coffee delivered weekly."
+    assert call["Text"] == (
+        '<speak>Fresh coffee delivered weekly.<break time="350ms"/>'
+        'Fresh coffee delivered weekly.<break time="350ms"/>'
+        "Fresh coffee delivered weekly.</speak>"
     )
     assert call["VoiceId"] == "Joanna"
     assert call["Engine"] == "neural"
     assert call["OutputFormat"] == "mp3"
+    assert call["TextType"] == "ssml"
 
 
 @pytest.mark.asyncio
@@ -379,6 +423,10 @@ async def test_pipeline_maps_throttling_and_auth_and_service_errors():
         ({"Error": {"Code": "ThrottlingException"}}, "PROVIDER_THROTTLED", True),
         ({"Error": {"Code": "AccessDeniedException"}}, "VOICE_PROVIDER_UNAVAILABLE", False),
         ({"Error": {"Code": "ServiceUnavailableException"}}, "VOICE_PROVIDER_UNAVAILABLE", True),
+        # A malformed-SSML business/product/message field is a deterministic
+        # input problem (defense-in-depth alongside per-scene XML escaping),
+        # not a transient provider issue, so it must not be retried.
+        ({"Error": {"Code": "InvalidSsmlException"}}, "VOICE_PROVIDER_UNAVAILABLE", False),
     ]
     for error_response, code, retryable in cases:
         polly = _Polly(error=ClientError(error_response, "SynthesizeSpeech"))
@@ -447,3 +495,157 @@ async def test_pipeline_cancellation_before_upload():
     with pytest.raises(NodeCancelled) as error:
         await pipeline.acquire(version, cancel_third_check)
     assert "before_s3_upload" in str(error.value)
+
+
+# ---------------------------------------------------------------------------
+# SSML construction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pipeline_ssml_escapes_xml_special_characters_in_narration():
+    version = _version()
+    storyboard = version.storyboard.model_copy(
+        update={
+            "scenes": [
+                scene.model_copy(update={"narration": "Tom & Jerry's Best Deal <ever>"})
+                for scene in version.storyboard.scenes
+            ]
+        }
+    )
+    version = version.model_copy(update={"storyboard": storyboard})
+    polly = _Polly()
+    pipeline = _pipeline(polly)
+    await pipeline.acquire(version, _never_cancelled)
+    text = polly.calls[0]["Text"]
+    assert "&amp;" in text
+    assert "&lt;ever&gt;" in text
+    # Document must be well-formed XML despite the raw & and < in source
+    # narration -- proves escaping happens per-scene before <break> tags are
+    # inserted, not on the already-tagged joined string.
+    import xml.etree.ElementTree as ET
+
+    ET.fromstring(text)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_ssml_contains_exactly_two_breaks_between_three_scenes():
+    version = _version()
+    polly = _Polly()
+    pipeline = _pipeline(polly)
+    await pipeline.acquire(version, _never_cancelled)
+    text = polly.calls[0]["Text"]
+    assert text.count('<break time="350ms"/>') == 2
+
+
+def test_build_ssml_never_emits_unsupported_neural_tags():
+    from campaign_worker.audio.pipeline import _build_ssml
+
+    text = _build_ssml(["Scene one.", "Scene two.", "Scene three."])
+    assert "<emphasis" not in text
+    assert "<prosody" not in text
+    assert text.startswith("<speak>")
+    assert text.endswith("</speak>")
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint widening: must invalidate reconciliation when synthesis
+# behavior changes, even if narration text is unchanged.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pipeline_regenerates_when_voice_id_changes_even_if_narration_unchanged():
+    version = _version()
+    store = S3ArtifactStore(_S3(), "private-bucket")
+    polly = _Polly()
+    await _pipeline(polly, store, voice_id="Joanna").acquire(version, _never_cancelled)
+    assert len(polly.calls) == 1
+    await _pipeline(polly, store, voice_id="Matthew").acquire(version, _never_cancelled)
+    assert len(polly.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pipeline_regenerates_when_engine_changes_even_if_narration_unchanged():
+    version = _version()
+    store = S3ArtifactStore(_S3(), "private-bucket")
+    polly = _Polly()
+    await _pipeline(polly, store, engine="neural").acquire(version, _never_cancelled)
+    assert len(polly.calls) == 1
+    await _pipeline(polly, store, engine="generative").acquire(version, _never_cancelled)
+    assert len(polly.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pipeline_regenerates_when_voice_synthesis_version_bumps(monkeypatch):
+    import campaign_worker.audio.pipeline as pipeline_module
+
+    version = _version()
+    store = S3ArtifactStore(_S3(), "private-bucket")
+    polly = _Polly()
+    pipeline = _pipeline(polly, store)
+    await pipeline.acquire(version, _never_cancelled)
+    assert len(polly.calls) == 1
+
+    monkeypatch.setattr(pipeline_module, "_VOICE_SYNTHESIS_VERSION", 2)
+    await pipeline.acquire(version, _never_cancelled)
+    assert len(polly.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pipeline_reconciles_when_voice_and_engine_and_version_are_all_unchanged():
+    version = _version()
+    store = S3ArtifactStore(_S3(), "private-bucket")
+    polly = _Polly()
+    pipeline = _pipeline(polly, store, voice_id="Joanna", engine="neural")
+    first = await pipeline.acquire(version, _never_cancelled)
+    assert len(polly.calls) == 1
+    second = await _pipeline(polly, store, voice_id="Joanna", engine="neural").acquire(version, _never_cancelled)
+    assert len(polly.calls) == 1
+    assert second.artifact_id == first.artifact_id
+
+
+# ---------------------------------------------------------------------------
+# Normalization integration: no silent fallback to raw/unnormalized audio.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pipeline_stores_normalized_audio_and_loudness_metadata():
+    version = _version()
+    s3 = _S3()
+    store = S3ArtifactStore(s3, "private-bucket")
+    polly = _Polly()
+    pipeline = _pipeline(polly, store)
+    await pipeline.acquire(version, _never_cancelled)
+
+    prefix = f"campaigns/{version.campaign_id}/versions/{version.campaign_version}/audio/voiceover"
+    import json
+
+    metadata = json.loads(s3.objects[f"{prefix}.metadata.json"])
+    assert metadata["text_type"] == "ssml"
+    assert metadata["ssml_break_ms"] == 350
+    assert metadata["normalization_applied"] is True
+    assert metadata["target_lufs"] == -16.0
+    assert metadata["true_peak_ceiling_dbtp"] == -1.5
+    assert metadata["measured_integrated_lufs"] == -16.20
+    assert metadata["measured_true_peak_dbtp"] == -1.50
+
+
+@pytest.mark.asyncio
+async def test_pipeline_propagates_normalization_failure_without_falling_back_to_raw_audio():
+    version = _version()
+    polly = _Polly()
+
+    class _FailingNormalizer:
+        async def normalize(self, mp3_bytes: bytes):
+            raise WorkflowOperationError("PROVIDER_TIMEOUT", "ffmpeg timed out", retryable=True)
+
+    pipeline = _pipeline(polly, normalizer=_FailingNormalizer())
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+    assert error.value.code == "PROVIDER_TIMEOUT"
+    assert error.value.retryable is True
+    # Polly synthesis succeeded, but nothing further happened -- confirming
+    # there's no fallback path that stores the raw, un-normalized bytes.
+    assert len(polly.calls) == 1
