@@ -19,6 +19,8 @@ packages = ["src/campaign_worker"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
+markers = ["live_smoke: hits the real Stability API and spends credits; opt-in only, never runs by default"]
+addopts = "-m 'not live_smoke'"
 
 [tool.ruff]
 target-version = "py312"

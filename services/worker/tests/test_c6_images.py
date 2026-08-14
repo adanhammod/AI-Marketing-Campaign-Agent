@@ -222,6 +222,45 @@ def test_s3_keys_metadata_artifact_ids_and_retry_reconciliation():
     assert store.reconcile(version, 1, campaign_storyboard_fingerprint(version)) == stored
 
 
+def test_s3_store_reconciles_generative_metadata_without_pexels_specific_keys():
+    version = _version()
+    s3 = _S3()
+    store = S3ArtifactStore(s3, "private-bucket")
+    image = ImageProcessor().normalize(_jpeg())
+    fingerprint = "generative-fingerprint-abc123"
+    metadata = {
+        "campaign_id": str(version.campaign_id),
+        "campaign_version": 2,
+        "scene_number": 1,
+        "storyboard_fingerprint": fingerprint,
+        "normalized_checksum": image.checksum_sha256,
+        "provider": "stability-ai",
+        "model": "sd3.5-large",
+        "aspect_ratio": "9:16",
+        "output_format": "jpeg",
+        "generation_version": 1,
+        "prompt_fingerprint": "abc123",
+        "seed": 42,
+    }
+    stored = store.put(version, 1, image, metadata)
+    assert stored.pexels_photo_id is None
+
+    # Before the fix, this KeyError'd on metadata["pexels_photo_id"] and was
+    # silently swallowed as a cache miss, defeating caching entirely for
+    # generative images.
+    reconciled = store.reconcile(version, 1, fingerprint)
+    assert reconciled is not None
+    assert reconciled == stored
+
+
+def test_s3_store_attribution_returns_none_for_stability_metadata():
+    metadata = {
+        "provider": "stability-ai",
+        "model": "sd3.5-large",
+    }
+    assert S3ArtifactStore._attribution(metadata) is None
+
+
 class _QueryGenerator:
     async def generate(self, version, is_cancelled):
         from campaign_worker.images.models import QueryGenerationResult

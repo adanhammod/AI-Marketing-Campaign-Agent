@@ -26,7 +26,13 @@ class S3ArtifactStore:
         self._bucket = bucket
 
     @staticmethod
-    def _attribution(metadata: dict[str, Any]) -> ArtifactAttribution:
+    def _attribution(metadata: dict[str, Any]) -> ArtifactAttribution | None:
+        # Generative (Stability) images have no photographer to attribute --
+        # only build Pexels attribution when the stock-only metadata key is
+        # present, so a KeyError here never gets misread as a cache miss
+        # (see reconcile()'s broad except clause below).
+        if "pexels_photo_id" not in metadata:
+            return None
         attribution = ArtifactAttribution.model_validate(
             {
                 "provider_asset_id": str(metadata["pexels_photo_id"]),
@@ -62,12 +68,13 @@ class S3ArtifactStore:
                 or metadata["normalized_checksum"] != checksum
             ):
                 return None
+            pexels_photo_id = metadata.get("pexels_photo_id")
             return StoredImage(
                 artifact_id=deterministic_artifact_id(version.campaign_id, version.campaign_version, scene_number),
                 checksum_sha256=checksum,
                 size_bytes=len(image),
                 created_at=datetime.fromisoformat(metadata["acquisition_timestamp"]),
-                pexels_photo_id=int(metadata["pexels_photo_id"]),
+                pexels_photo_id=int(pexels_photo_id) if pexels_photo_id is not None else None,
                 attribution=self._attribution(metadata),
             )
         except ClientError as exc:
@@ -111,13 +118,15 @@ class S3ArtifactStore:
             )
         except Exception as exc:
             raise WorkflowOperationError("STORAGE_UNAVAILABLE", "artifact storage unavailable", retryable=True) from exc
+        typed_metadata = cast(dict[str, Any], metadata)
+        pexels_photo_id = typed_metadata.get("pexels_photo_id")
         return StoredImage(
             artifact_id=deterministic_artifact_id(version.campaign_id, version.campaign_version, scene_number),
             checksum_sha256=image.checksum_sha256,
             size_bytes=len(image.data),
             created_at=created_at,
-            pexels_photo_id=cast(int, metadata["pexels_photo_id"]),
-            attribution=self._attribution(cast(dict[str, Any], metadata)),
+            pexels_photo_id=int(pexels_photo_id) if pexels_photo_id is not None else None,
+            attribution=self._attribution(typed_metadata),
         )
 
     @staticmethod

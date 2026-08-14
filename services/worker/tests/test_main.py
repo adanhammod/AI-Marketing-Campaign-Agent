@@ -7,6 +7,8 @@ from campaign_worker.audio.pipeline import PollyVoicePipeline
 from campaign_worker.config import Settings
 from campaign_worker.errors import ConfigurationError
 from campaign_worker.health import build_health_app
+from campaign_worker.images.generative_pipeline import GenerativeImagePipeline
+from campaign_worker.images.pipeline import StockImagePipeline
 from campaign_worker.main import build_consumer
 from campaign_worker.package.pipeline import S3PackagePipeline
 from campaign_worker.providers.mock_package_pipeline import MockPackagePipeline
@@ -24,6 +26,7 @@ def _settings(**overrides):
         artifact_bucket="campaign-artifacts",
         pexels_api_key="test-key",
         bedrock_image_query_model_id="test-model",
+        stability_api_key="test-stability-key",
         # sys.executable is guaranteed to exist and be executable in any test
         # environment, standing in for a real ffmpeg/ffprobe binary purely
         # for availability detection. The voice pipeline now hard-requires
@@ -163,3 +166,54 @@ def test_build_consumer_falls_back_to_mock_package_pipeline_when_asset_pipeline_
     settings = _settings(artifact_bucket=None, pexels_api_key=None, bedrock_image_query_model_id=None)
     consumer = build_consumer(settings, sqs_client=object(), dynamodb_client=object())
     assert isinstance(consumer._processor._package_pipeline, MockPackagePipeline)
+
+
+def test_build_consumer_defaults_image_provider_mode_to_generative_and_wires_generative_pipeline():
+    consumer = build_consumer(
+        _settings(),
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    assert isinstance(consumer._processor._image_provider, GenerativeImagePipeline)
+
+
+def test_build_consumer_in_stock_mode_wires_stock_pipeline_only_and_never_constructs_stability_client():
+    settings = _settings(image_provider_mode="stock", stability_api_key=None)
+    consumer = build_consumer(
+        settings,
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    assert isinstance(consumer._processor._image_provider, StockImagePipeline)
+
+
+def test_build_consumer_raises_configuration_error_when_generative_mode_missing_stability_key():
+    settings = _settings(stability_api_key=None)
+    with pytest.raises(ConfigurationError):
+        build_consumer(
+            settings,
+            sqs_client=object(),
+            dynamodb_client=object(),
+            bedrock_client=object(),
+            s3_client=object(),
+            polly_client=object(),
+        )
+
+
+def test_build_consumer_raises_configuration_error_when_stock_mode_missing_pexels_key():
+    settings = _settings(image_provider_mode="stock", pexels_api_key=None)
+    with pytest.raises(ConfigurationError):
+        build_consumer(
+            settings,
+            sqs_client=object(),
+            dynamodb_client=object(),
+            bedrock_client=object(),
+            s3_client=object(),
+            polly_client=object(),
+        )

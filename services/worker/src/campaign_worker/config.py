@@ -15,6 +15,13 @@ class Settings:
     pexels_candidate_count: int = 15
     image_http_timeout_seconds: float = 20
     image_max_download_bytes: int = 25_000_000
+    image_provider_mode: str = "generative"
+    image_pexels_fallback_enabled: bool = True
+    stability_api_key: str | None = None
+    stability_image_model: str = "sd3.5-large"
+    stability_image_aspect_ratio: str = "9:16"
+    stability_image_output_format: str = "jpeg"
+    stability_http_timeout_seconds: float = 60
     polly_voice_id: str | None = None
     polly_engine: str = "neural"
     audio_normalize_timeout_seconds: float = 30
@@ -52,10 +59,23 @@ class Settings:
             raise ConfigurationError("health port must be between 1 and 65535")
 
     def validate_image_pipeline(self) -> None:
-        if not self.artifact_bucket or not self.pexels_api_key or not self.bedrock_image_query_model_id:
-            raise ConfigurationError("artifact bucket, Pexels API key, and Bedrock query model are required")
-        if not 1 <= self.pexels_candidate_count <= 40:
+        if self.image_provider_mode not in {"generative", "stock"}:
+            raise ConfigurationError("IMAGE_PROVIDER_MODE must be 'generative' or 'stock'")
+        if not self.artifact_bucket or not self.bedrock_image_query_model_id:
+            raise ConfigurationError("artifact bucket and Bedrock query model are required")
+        needs_pexels = self.image_provider_mode == "stock" or self.image_pexels_fallback_enabled
+        if needs_pexels and not self.pexels_api_key:
+            raise ConfigurationError("Pexels API key is required for stock mode or when fallback is enabled")
+        if needs_pexels and not 1 <= self.pexels_candidate_count <= 40:
             raise ConfigurationError("Pexels candidate count must be between 1 and 40")
+        # Stability is a hard dependency of generative mode -- fail fast at
+        # startup rather than masking a missing key as a per-job "transient
+        # provider failure" once the pipeline starts falling back to Pexels.
+        if self.image_provider_mode == "generative":
+            if not self.stability_api_key:
+                raise ConfigurationError("Stability API key is required when IMAGE_PROVIDER_MODE=generative")
+            if self.stability_http_timeout_seconds <= 0:
+                raise ConfigurationError("Stability HTTP timeout must be positive")
         if self.image_http_timeout_seconds <= 0:
             raise ConfigurationError("image HTTP timeout must be positive")
         if self.image_max_download_bytes < 1:
@@ -96,6 +116,13 @@ class Settings:
             pexels_candidate_count=int(os.getenv("PEXELS_CANDIDATE_COUNT", "15")),
             image_http_timeout_seconds=float(os.getenv("IMAGE_HTTP_TIMEOUT_SECONDS", "20")),
             image_max_download_bytes=int(os.getenv("IMAGE_MAX_DOWNLOAD_BYTES", "25000000")),
+            image_provider_mode=os.getenv("IMAGE_PROVIDER_MODE", "generative"),
+            image_pexels_fallback_enabled=os.getenv("IMAGE_PEXELS_FALLBACK_ENABLED", "true").lower() == "true",
+            stability_api_key=os.getenv("STABILITY_API_KEY"),
+            stability_image_model=os.getenv("STABILITY_IMAGE_MODEL", "sd3.5-large"),
+            stability_image_aspect_ratio=os.getenv("STABILITY_IMAGE_ASPECT_RATIO", "9:16"),
+            stability_image_output_format=os.getenv("STABILITY_IMAGE_OUTPUT_FORMAT", "jpeg"),
+            stability_http_timeout_seconds=float(os.getenv("STABILITY_HTTP_TIMEOUT_SECONDS", "60")),
             polly_voice_id=os.getenv("POLLY_VOICE_ID"),
             polly_engine=os.getenv("POLLY_ENGINE", "neural"),
             audio_normalize_timeout_seconds=float(os.getenv("AUDIO_NORMALIZE_TIMEOUT_SECONDS", "30")),
