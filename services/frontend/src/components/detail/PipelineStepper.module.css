@@ -1,12 +1,12 @@
 .wrap {
-  margin-top: var(--space-7);
+  margin-top: var(--space-5);
 }
 
 .track {
   display: flex;
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: var(--space-2) 0;
 }
 
 .step {
@@ -16,15 +16,24 @@
   flex-direction: column;
   align-items: center;
   min-width: 0;
+  padding: var(--space-2) var(--space-1);
+}
+
+.step[data-state='current']::before {
+  content: '';
+  position: absolute;
+  inset: 0 0.2rem;
+  background: var(--color-indigo-soft);
+  border-radius: var(--radius-lg);
 }
 
 /* Connector line — spans from the previous node's center to this one's. */
 .line {
   position: absolute;
   left: -50%;
-  top: 0.8125rem;
+  top: calc(var(--space-2) + 1.25rem);
   width: 100%;
-  height: 3px;
+  height: 4px;
   border-radius: var(--radius-pill);
   background: var(--color-divider);
   overflow: hidden;
@@ -50,11 +59,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 2.5rem;
+  height: 2.5rem;
   flex: none;
   border-radius: var(--radius-pill);
-  border: 2px solid var(--color-ink-muted);
+  border: 2.5px solid var(--color-ink-muted);
   background: var(--color-surface);
   transition:
     background-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -63,8 +72,8 @@
 }
 
 .nodeIcon {
-  width: 0.9rem;
-  height: 0.9rem;
+  width: 1.2rem;
+  height: 1.2rem;
   stroke-width: 3;
   /* Ink, not white — white-on-emerald/amber measures ~2.1-2.5:1, well under
      the 3:1 non-text minimum. Ink gives 6.4:1+ against both fills. */
@@ -80,7 +89,7 @@
 .step[data-state='current'] .node {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 6px var(--glow-primary);
+  box-shadow: 0 0 0 5px var(--glow-primary);
 }
 
 .step[data-state='revision'] .node {
@@ -90,9 +99,10 @@
 }
 
 .label {
+  position: relative;
   margin-top: var(--space-2);
   font-family: var(--font-body);
-  font-size: var(--text-caption);
+  font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-ink-muted);
@@ -106,11 +116,15 @@
   color: var(--color-ink);
 }
 
+.step[data-state='current'] .label {
+  font-weight: 700;
+}
+
 .haltedBanner {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin: var(--space-4) 0 0;
+  margin: var(--space-5) 0 0;
   padding: var(--space-4);
   border: 1px solid var(--color-danger);
   border-radius: var(--radius-md);
@@ -134,10 +148,10 @@
   }
 
   .step {
-    min-width: 4.25rem;
+    min-width: 4.75rem;
   }
 
   .label {
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
   }
 }

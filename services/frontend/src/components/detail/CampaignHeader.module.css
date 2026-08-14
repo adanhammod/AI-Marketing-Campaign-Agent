@@ -1,0 +1,116 @@
+.header {
+  display: flex;
+  flex-direction: column;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-label);
+  font-weight: 500;
+  color: var(--color-ink-muted);
+  text-decoration: none;
+  margin-bottom: var(--space-5);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .backLink:hover {
+    color: var(--color-primary);
+  }
+}
+
+.eyebrowRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.eyebrow {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-coral-ink);
+}
+
+.statusBadge {
+  font-family: var(--font-body);
+  font-size: var(--text-caption);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: var(--radius-pill);
+  padding: 0.3rem 0.75rem;
+  white-space: nowrap;
+}
+
+.statusBadge[data-bucket='queued'],
+.statusBadge[data-bucket='cancelled'] {
+  color: var(--color-ink-muted);
+  background: var(--color-bg-alt);
+}
+
+.statusBadge[data-bucket='generating'] {
+  color: var(--color-amber-ink);
+  background: var(--color-amber-soft);
+}
+
+.statusBadge[data-bucket='review'] {
+  color: var(--color-primary-strong);
+  background: var(--color-sky-soft);
+}
+
+.statusBadge[data-bucket='done'] {
+  color: var(--color-emerald-ink);
+  background: var(--color-emerald-soft);
+}
+
+.statusBadge[data-bucket='failed'] {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.title {
+  font-size: clamp(1.75rem, 1.2rem + 2vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+  color: var(--color-ink);
+}
+
+.subtitle {
+  margin: var(--space-2) 0 0;
+  font-size: 1.0625rem;
+  line-height: 1.5;
+  color: var(--color-ink-muted);
+}
+
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-4);
+  font-family: var(--font-body);
+  font-size: var(--text-label);
+  color: var(--color-ink-muted);
+}
+
+.campaignId {
+  word-break: break-word;
+}
+
+.updated {
+  position: relative;
+  padding-left: var(--space-3);
+}
+
+.updated::before {
+  content: '·';
+  position: absolute;
+  left: 0;
+}

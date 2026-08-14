@@ -56,9 +56,7 @@ describe('CreateCampaignPage', () => {
     await user.click(screen.getByRole('button', { name: 'Create campaign' }))
 
     expect(
-      await screen.findByRole('heading', {
-        name: new RegExp(campaignCreationAcceptedFixture.campaign_id),
-      }),
+      await screen.findByText(new RegExp(campaignCreationAcceptedFixture.campaign_id)),
     ).toBeInTheDocument()
   })
 })

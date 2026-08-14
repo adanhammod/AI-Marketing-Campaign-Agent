@@ -1,8 +1,19 @@
-import type { CampaignStatus } from '../../routes/CampaignDetailPage.fixtures'
+import type { components } from '../../api/schema.gen'
 import { AlertIcon, CheckIcon } from '../creation/icons'
 import styles from './PipelineStepper.module.css'
 
-type PipelineStage = 'queued' | 'strategy' | 'copy' | 'storyboard' | 'images' | 'video' | 'ready'
+export type CampaignStatus = components['schemas']['CampaignStatus']
+export type WorkflowStep = components['schemas']['WorkflowStep']
+
+type PipelineStage =
+  | 'queued'
+  | 'strategy'
+  | 'copy'
+  | 'storyboard'
+  | 'images'
+  | 'voiceover'
+  | 'video'
+  | 'ready'
 
 const STAGE_ORDER: PipelineStage[] = [
   'queued',
@@ -10,6 +21,7 @@ const STAGE_ORDER: PipelineStage[] = [
   'copy',
   'storyboard',
   'images',
+  'voiceover',
   'video',
   'ready',
 ]
@@ -20,13 +32,16 @@ const STAGE_LABEL: Record<PipelineStage, string> = {
   copy: 'Copy',
   storyboard: 'Storyboard',
   images: 'Images',
+  voiceover: 'Voiceover',
   video: 'Video',
   ready: 'Ready',
 }
 
-// Collapses the API's granular CampaignStatus into the 7 stage groups shown
-// here. REVISION_REQUESTED/FAILED/CANCELLED are handled separately below —
-// they don't map onto a forward stage the way generation progress does.
+// Coarse fallback used only when `currentStep` isn't available yet (e.g. the
+// very first render before the API responds). CampaignStatus itself has no
+// GENERATING_VOICEOVER value -- it jumps GENERATING_IMAGES -> RENDERING_VIDEO
+// -- so this map alone can never distinguish the Voiceover stage. Real
+// distinction comes from WORKFLOW_STEP_TO_STAGE below via `currentStep`.
 const STATUS_STAGE: Partial<Record<CampaignStatus, PipelineStage>> = {
   CREATED: 'queued',
   QUEUED: 'queued',
@@ -38,6 +53,31 @@ const STATUS_STAGE: Partial<Record<CampaignStatus, PipelineStage>> = {
   READY_FOR_REVIEW: 'ready',
   APPROVED: 'ready',
   FINAL: 'ready',
+}
+
+// WorkflowStep is the fine-grained signal that actually distinguishes
+// Voiceover from Images/Video. 'package' has no visible stage here --
+// final packaging happens after approval, out of scope for this stepper.
+const WORKFLOW_STEP_TO_STAGE: Partial<Record<WorkflowStep, PipelineStage>> = {
+  strategy: 'strategy',
+  copy: 'copy',
+  storyboard: 'storyboard',
+  images: 'images',
+  voiceover: 'voiceover',
+  video: 'video',
+}
+
+function resolveStage(status: CampaignStatus, currentStep?: WorkflowStep | null): PipelineStage | undefined {
+  // Terminal "everything's done" statuses always win, regardless of which
+  // step last ran.
+  if (status === 'READY_FOR_REVIEW' || status === 'APPROVED' || status === 'FINAL') {
+    return 'ready'
+  }
+  if (currentStep) {
+    const mapped = WORKFLOW_STEP_TO_STAGE[currentStep]
+    if (mapped) return mapped
+  }
+  return STATUS_STAGE[status]
 }
 
 type StepState = 'complete' | 'current' | 'revision' | 'upcoming' | 'halted'
@@ -52,12 +92,13 @@ const STATE_TEXT: Record<StepState, string> = {
 
 interface PipelineStepperProps {
   status: CampaignStatus
+  currentStep?: WorkflowStep | null
 }
 
-export function PipelineStepper({ status }: PipelineStepperProps) {
+export function PipelineStepper({ status, currentStep }: PipelineStepperProps) {
   const isHalted = status === 'FAILED' || status === 'CANCELLED'
   const isRevision = status === 'REVISION_REQUESTED'
-  const stage = isRevision ? 'ready' : STATUS_STAGE[status]
+  const stage = isRevision ? 'ready' : resolveStage(status, currentStep)
   const currentIndex = isHalted || !stage ? -1 : STAGE_ORDER.indexOf(stage)
 
   return (

@@ -1,0 +1,43 @@
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  font-size: var(--text-h2);
+  font-weight: 600;
+}
+
+.statusBadge {
+  flex: none;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.65rem;
+  white-space: nowrap;
+}
+
+.statusBadge[data-status='pending'] {
+  color: var(--color-ink-muted);
+  background: var(--color-bg-alt);
+}
+
+.statusBadge[data-status='generating'] {
+  color: var(--color-amber-ink);
+  background: var(--color-amber-soft);
+}
+
+.statusBadge[data-status='ready'] {
+  color: var(--color-emerald-ink);
+  background: var(--color-emerald-soft);
+}
+
+.statusBadge[data-status='failed'] {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}

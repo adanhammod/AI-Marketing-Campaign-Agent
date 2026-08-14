@@ -51,4 +51,19 @@ describe('PipelineStepper', () => {
     expect(screen.queryByRole('listitem', { name: /current step/ })).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(/cancelled/i)
   })
+
+  it('uses currentStep to show Voiceover as its own current stage, since CampaignStatus has no GENERATING_VOICEOVER value', () => {
+    render(<PipelineStepper status="GENERATING_IMAGES" currentStep="voiceover" />)
+
+    expect(screen.getByRole('listitem', { name: /Images — complete/ })).toBeInTheDocument()
+    const current = screen.getByRole('listitem', { name: /Voiceover — current step/ })
+    expect(current).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByRole('listitem', { name: /Video — upcoming/ })).toBeInTheDocument()
+  })
+
+  it('falls back to the coarse status mapping when currentStep is not provided', () => {
+    render(<PipelineStepper status="GENERATING_IMAGES" />)
+
+    expect(screen.getByRole('listitem', { name: /Images — current step/ })).toBeInTheDocument()
+  })
 })
