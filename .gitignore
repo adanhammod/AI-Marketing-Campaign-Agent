@@ -32,3 +32,14 @@ build/
 # Local harness runtime state
 .claude/
 hyperframes-luna-poc.mp4
+
+# Local AI/tool metadata
+.agents/
+.codex/
+.impeccable/
+services/.agents/
+
+# Temporary local files
+.codex-write-check.tmp
+
+dynamodb get-item*
