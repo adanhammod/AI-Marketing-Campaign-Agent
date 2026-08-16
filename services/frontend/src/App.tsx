@@ -4,16 +4,9 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { createQueryClient } from './api/queryClient'
 import { CampaignDetailPage } from './routes/CampaignDetailPage'
 import { CreateCampaignPage } from './routes/CreateCampaignPage'
+import { Home } from './routes/Home'
 
 const queryClient = createQueryClient()
-
-function Home() {
-  return (
-    <main>
-      <h1>AI Marketing Campaign Agent</h1>
-    </main>
-  )
-}
 
 function App() {
   return (

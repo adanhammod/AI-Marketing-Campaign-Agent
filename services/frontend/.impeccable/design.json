@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-07T00:00:00Z",
+  "title": "Design System: AI Marketing Campaign Agent",
+  "extensions": {
+    "colorMeta": {
+      "royal-blue": {
+        "role": "primary",
+        "displayName": "Royal Blue",
+        "canonical": "#2563eb",
+        "tonalRamp": [
+          "#0f1d4a",
+          "#16266b",
+          "#1d3a99",
+          "#2563eb",
+          "#5c85ef",
+          "#93aaf5",
+          "#c3d1fa",
+          "#eef2ff"
+        ]
+      },
+      "working-indigo": {
+        "role": "primary",
+        "displayName": "Working Indigo",
+        "canonical": "#4f46e5",
+        "tonalRamp": [
+          "#1c1a5e",
+          "#282489",
+          "#372fb0",
+          "#4f46e5",
+          "#7d76ec",
+          "#a8a3f2",
+          "#cfccf8",
+          "#eef2ff"
+        ]
+      },
+      "bright-cyan": {
+        "role": "secondary",
+        "displayName": "Bright Cyan",
+        "canonical": "#06b6d4",
+        "tonalRamp": [
+          "#053a44",
+          "#075364",
+          "#08839c",
+          "#06b6d4",
+          "#4fd0e6",
+          "#8ee2f0",
+          "#c1f0f8",
+          "#eafcff"
+        ]
+      },
+      "studio-teal": {
+        "role": "secondary",
+        "displayName": "Studio Teal",
+        "canonical": "#14b8a6",
+        "tonalRamp": [
+          "#083b35",
+          "#0b544a",
+          "#0f8779",
+          "#14b8a6",
+          "#56d0c2",
+          "#96e2d8",
+          "#c5f0ea",
+          "#e3f8f5"
+        ]
+      },
+      "confirming-emerald": {
+        "role": "secondary",
+        "displayName": "Confirming Emerald",
+        "canonical": "#10b981",
+        "tonalRamp": [
+          "#053324",
+          "#0a4d34",
+          "#0d7d59",
+          "#10b981",
+          "#52d1a8",
+          "#93e5c8",
+          "#c3f2e1",
+          "#e7f9f2"
+        ]
+      },
+      "warm-coral": {
+        "role": "tertiary",
+        "displayName": "Warm Coral",
+        "canonical": "#fb7156",
+        "tonalRamp": [
+          "#5c1c0f",
+          "#812814",
+          "#c1401f",
+          "#fb7156",
+          "#fd9a87",
+          "#fec0b3",
+          "#ffdfd7",
+          "#fff1ed"
+        ]
+      },
+      "signal-amber": {
+        "role": "tertiary",
+        "displayName": "Signal Amber",
+        "canonical": "#f59e0b",
+        "tonalRamp": [
+          "#4d3103",
+          "#6e4705",
+          "#b87708",
+          "#f59e0b",
+          "#f8b950",
+          "#fbd28c",
+          "#fde6bd",
+          "#fef3e2"
+        ]
+      },
+      "sky-blue": {
+        "role": "tertiary",
+        "displayName": "Sky Blue",
+        "canonical": "#38bdf8",
+        "tonalRamp": [
+          "#0c3a52",
+          "#125576",
+          "#1f8bc4",
+          "#38bdf8",
+          "#7ad4fa",
+          "#aee5fc",
+          "#d4f1fd",
+          "#eaf7fe"
+        ]
+      },
+      "near-black-ink": {
+        "role": "neutral",
+        "displayName": "Near-Black Ink",
+        "canonical": "#172033",
+        "tonalRamp": [
+          "#0a0e17",
+          "#111726",
+          "#172033",
+          "#2b3652",
+          "#4a5670",
+          "#7a8496",
+          "#b2b9c5",
+          "#eceef2"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Single H1 per route." },
+      "headline": { "displayName": "Headline", "purpose": "Section and column titles." },
+      "body": { "displayName": "Body", "purpose": "Input text and primary reading copy." },
+      "label": { "displayName": "Label", "purpose": "Field labels, section legends." },
+      "caption": { "displayName": "Caption", "purpose": "Status badges, micro-metadata." }
+    },
+    "shadows": [
+      {
+        "name": "card",
+        "value": "0 2px 8px rgba(23,32,51,0.06), 0 1px 2px rgba(23,32,51,0.04)",
+        "purpose": "Resting elevation for bento/preview tiles."
+      },
+      {
+        "name": "float",
+        "value": "0 24px 48px -18px rgba(37,99,235,0.14), 0 4px 12px rgba(23,32,51,0.04)",
+        "purpose": "Hover-lift state for interactive cards."
+      },
+      {
+        "name": "float-hover",
+        "value": "0 32px 56px -18px rgba(37,99,235,0.2), 0 6px 16px rgba(23,32,51,0.06)",
+        "purpose": "Strongest hover state, used on the primary CTA."
+      },
+      {
+        "name": "hero",
+        "value": "0 40px 72px -24px rgba(37,99,235,0.22), 0 8px 20px rgba(23,32,51,0.06)",
+        "purpose": "Largest tier — sticky watch column overlap, CTA resting shadow."
+      }
+    ],
+    "motion": [
+      { "name": "duration-fast", "value": "150ms", "purpose": "Hover/press micro-interactions." },
+      {
+        "name": "duration-standard",
+        "value": "200-250ms",
+        "purpose": "Focus rings, selection state, card lift."
+      },
+      {
+        "name": "ease-standard",
+        "value": "ease",
+        "purpose": "Default transition easing across the system today."
+      }
+    ],
+    "breakpoints": [
+      { "name": "tablet", "value": "960px" },
+      { "name": "mobile", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main call-to-action; gradient fill, glass highlight, lift + glow on hover.",
+      "html": "<button class=\"ds-btn-primary\">Create campaign<svg class=\"ds-btn-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"><path d=\"M4.5 12h15M13.5 6l6 6-6 6\"/></svg></button>",
+      "css": ".ds-btn-primary{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:8px;font-family:var(--font-body);font-weight:600;font-size:1.0625rem;color:#fff;background:linear-gradient(135deg,#2563eb,#14b8a6);border:none;border-radius:20px;min-height:3.5rem;padding:0 64px;cursor:pointer;box-shadow:0 40px 72px -24px rgba(37,99,235,.22),0 8px 20px rgba(23,32,51,.06);transition:box-shadow .2s ease,transform .2s ease}.ds-btn-primary::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.22),transparent 55%);pointer-events:none}.ds-btn-icon{width:1.15rem;height:1.15rem;transition:transform .2s ease}.ds-btn-primary:hover{box-shadow:0 0 0 6px rgba(37,99,235,.16),0 32px 56px -18px rgba(37,99,235,.2),0 6px 16px rgba(23,32,51,.06);transform:translateY(-2px)}.ds-btn-primary:hover .ds-btn-icon{transform:translateX(3px)}.ds-btn-primary:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.ds-btn-primary:active{transform:translateY(0) scale(.98)}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Borderless at rest; reveals a filled surface and indigo ring on focus.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-label\" for=\"ds-demo-input\">Business name</label><input class=\"ds-input\" id=\"ds-demo-input\" /></div>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:4px}.ds-label{font-size:.8125rem;font-weight:500;color:#64748b}.ds-input{font-family:var(--font-body);font-size:1.0625rem;color:#172033;background:transparent;border:none;border-bottom:1px solid rgba(37,99,235,.08);padding:8px 0;width:100%;transition:border-color .2s ease,background-color .2s ease,box-shadow .2s ease}.ds-input:focus{outline:none;border-color:transparent;border-radius:12px;background:#fff;box-shadow:0 0 0 3px #eef2ff;padding:8px 12px}"
+    },
+    {
+      "name": "Platform Chip",
+      "kind": "chip",
+      "refersTo": "platform-chip",
+      "description": "Compact icon-first selectable chip; selected state shows an animated checkmark badge.",
+      "html": "<div class=\"ds-chip\" data-selected=\"true\"><span class=\"ds-chip-check\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"><path d=\"M4.5 12.5 9.5 17.5 19.5 6.5\"/></svg></span><label class=\"ds-chip-label\"><span class=\"ds-chip-icon\">IG</span><span>Instagram</span></label></div>",
+      "css": ".ds-chip{position:relative;border-radius:999px;background:#eef2ff;box-shadow:0 0 0 2px #4f46e5;transition:transform .2s ease}.ds-chip-label{display:flex;align-items:center;gap:8px;padding:8px 16px 8px 8px;cursor:pointer;font-size:.875rem;font-weight:600;color:#172033}.ds-chip-icon{display:inline-flex;align-items:center;justify-content:center;width:1.75rem;height:1.75rem;border-radius:50%;background:#fb7156;color:#fff;font-size:.65rem}.ds-chip-check{position:absolute;top:-6px;right:-6px;display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;border-radius:999px;background:#10b981;color:#fff;box-shadow:0 4px 10px rgba(16,185,129,.35)}.ds-chip-check svg{width:.7rem;height:.7rem}.ds-chip:hover{transform:translateY(-2px)}"
+    },
+    {
+      "name": "Bento Preview Card (Strategy)",
+      "kind": "card",
+      "refersTo": "card-bento",
+      "description": "Draft-honest placeholder card — skeleton outline bars standing in for a strategy doc, not an icon.",
+      "html": "<div class=\"ds-bento\"><div class=\"ds-bento-skeleton\"><span></span><span></span><span></span><span></span></div><div class=\"ds-bento-head\"><h3 class=\"ds-bento-title\">Marketing Strategy</h3><span class=\"ds-bento-badge\">Coming after generation</span></div><p class=\"ds-bento-desc\">Positioning, audience, and channel plan.</p></div>",
+      "css": ".ds-bento{display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:20px;background:#eef2ff;box-shadow:0 2px 8px rgba(23,32,51,.06),0 1px 2px rgba(23,32,51,.04);transition:box-shadow .25s ease,transform .25s ease}.ds-bento:hover{box-shadow:0 24px 48px -18px rgba(37,99,235,.14),0 4px 12px rgba(23,32,51,.04);transform:translateY(-4px)}.ds-bento-skeleton{display:flex;flex-direction:column;gap:8px;padding:8px 0}.ds-bento-skeleton span{display:block;height:8px;border-radius:999px;background:rgba(79,70,229,.16)}.ds-bento-skeleton span:nth-child(1){width:92%}.ds-bento-skeleton span:nth-child(2){width:78%}.ds-bento-skeleton span:nth-child(3){width:60%}.ds-bento-skeleton span:nth-child(4){width:40%}.ds-bento-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.ds-bento-title{font-family:var(--font-display);font-size:.9375rem;font-weight:600;color:#172033}.ds-bento-badge{font-size:.625rem;font-weight:600;letter-spacing:.04em;color:#92400e;background:#fef3e2;border-radius:999px;padding:.2rem .6rem}.ds-bento-desc{margin:0;font-size:.75rem;color:#64748b}"
+    },
+    {
+      "name": "More Detail Disclosure",
+      "kind": "custom",
+      "refersTo": "disclosure",
+      "description": "Native details/summary used to hide optional fields and shrink a form's perceived footprint.",
+      "html": "<details class=\"ds-disclosure\"><summary class=\"ds-disclosure-summary\">Add more detail</summary><div class=\"ds-disclosure-body\">Optional fields live here.</div></details>",
+      "css": ".ds-disclosure-summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;font-size:.875rem;font-weight:500;color:#64748b;width:fit-content}.ds-disclosure-summary::-webkit-details-marker{display:none}.ds-disclosure-summary::before{content:'';width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:5px solid #64748b;transition:transform .2s ease}.ds-disclosure[open] .ds-disclosure-summary::before{transform:rotate(90deg)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Draft Room",
+    "overview": "This is the visual language of a creative agency's draft room, not an enterprise dashboard: work is shown honestly at whatever stage it's actually in — a blank shot-grid, a row of skeleton bars standing in for copy that doesn't exist yet — rather than dressed up with a spinner or a stock icon pretending to be more finished than it is. The product's whole positioning (one brief in, one coherent campaign out, nothing final without human approval) shows up visually as restraint: one calm neutral canvas, one confident accent spent on the things that actually need it, and a small, deliberate family of secondary/accent colors used to give each area its own identity without the page turning into a rainbow. The system is restrained, confident, and quietly colorful. It explicitly rejects the generic enterprise SaaS dashboard and the generic AI-generated UI cliche (purple/pink gradient blobs, spinning loaders, icon-tile grids). Depth is structural, not atmospheric.",
+    "keyCharacteristics": [
+      "Draft-honest content: placeholders look like drafts of their real shape, never a generic spinner or icon.",
+      "One confident accent per moment: color is spent deliberately, not spread evenly.",
+      "Structural depth: shadow tiers sell real layering, not ambient decoration.",
+      "Quiet chrome, loud state: resting UI stays close to invisible; state changes are where contrast lives."
+    ],
+    "rules": [
+      {
+        "name": "The One Accent Rule",
+        "body": "Any single moment on screen earns exactly one confident color decision. Never stack two accent colors as competing focal points in the same component.",
+        "section": "colors"
+      },
+      {
+        "name": "The Status-Is-Not-Decoration Rule",
+        "body": "Signal Amber is reserved for status communication and never reused as a decorative icon-badge color.",
+        "section": "colors"
+      },
+      {
+        "name": "The Large-Input Rule",
+        "body": "Input text renders at body size, never smaller than its own label implies.",
+        "section": "typography"
+      },
+      {
+        "name": "The Front-of-Form Rule",
+        "body": "The watch column's shadow tier is always at least one step heavier than anything in the write column.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do show unfinished content as an honest draft of its own shape — never a spinner, a generic icon, or a progress bar.",
+      "Do spend shadow deliberately — a heavier tier means structurally in front, not just decorative.",
+      "Do keep resting UI quiet so state changes are where contrast lives.",
+      "Do give each functional area its own accent identity from the established five-color family."
+    ],
+    "donts": [
+      "Don't use a spinning loader or fake progress indicator to represent AI thinking — the one exception is a real in-flight network request on the primary CTA.",
+      "Don't introduce a sixth accent color or new gradient combination without updating DESIGN.md.",
+      "Don't wrap every section in its own bordered/shadowed box by default.",
+      "Don't use Whisper Lavender as a surface fill or gradient stop."
+    ]
+  }
+}

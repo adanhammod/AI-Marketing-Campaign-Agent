@@ -76,7 +76,17 @@ function CampaignDetail({ campaignId }: { campaignId: string }) {
             </p>
           </div>
         ) : data ? (
-          <CampaignDetailContent data={data} artifacts={artifactsQuery.data?.items} />
+          <>
+            {artifactsQuery.isError ? (
+              <div className={styles.errorBanner} role="alert">
+                <AlertIcon className={styles.errorIcon} />
+                <p className={styles.errorText}>
+                  We couldn&rsquo;t load the downloadable assets for this campaign. Try refreshing the page.
+                </p>
+              </div>
+            ) : null}
+            <CampaignDetailContent data={data} artifacts={artifactsQuery.data?.items} />
+          </>
         ) : null}
       </div>
     </main>

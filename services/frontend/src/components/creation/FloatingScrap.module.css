@@ -1,0 +1,41 @@
+.scrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transform: rotate(var(--scrap-rotate, 0deg));
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .scrap:hover {
+    transform: rotate(0deg) translateY(-4px);
+    box-shadow: var(--shadow-float);
+  }
+}
+
+.wide {
+  grid-column: span 2;
+}
+
+.scrap[data-tone='indigo'] {
+  background: var(--color-indigo-soft);
+}
+
+.scrap[data-tone='sky'] {
+  background: var(--color-sky-soft);
+}
+
+.scrap[data-tone='coral'] {
+  background: var(--color-coral-soft);
+}
+
+.scrap[data-tone='amber'] {
+  background: var(--color-amber-soft);
+}
+
+.scrap[data-tone='emerald'] {
+  background: var(--color-emerald-soft);
+}

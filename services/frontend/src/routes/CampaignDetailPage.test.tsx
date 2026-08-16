@@ -148,6 +148,27 @@ describe('CampaignDetailPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/couldn.t load/i)
   })
 
+  it(
+    'shows an error state when the artifacts endpoint fails, without hiding the rest of the page',
+    async () => {
+      mockDetail(baseDetail({ status: 'GENERATING_IMAGES', current_step: 'images' }))
+      server.use(
+        http.get('/api/v1/campaigns/:campaignId/artifacts', () =>
+          HttpResponse.json({ error: { code: 'STORAGE_UNAVAILABLE' } }, { status: 503 }),
+        ),
+      )
+      renderDetailPage()
+
+      // The artifacts query retries a 503 (up to 3x with backoff, see queryClient.ts)
+      // before settling into isError, so this needs a longer wait than the default.
+      expect(await screen.findByRole('alert', {}, { timeout: 10000 })).toHaveTextContent(
+        /couldn.t load.*(assets|download)/i,
+      )
+      expect(screen.getByText('Luna Coffee: Luna Cold Brew')).toBeInTheDocument()
+    },
+    15000,
+  )
+
   it('renders all workflow stages including Voiceover as its own distinct stage', async () => {
     mockDetail(baseDetail({ status: 'GENERATING_IMAGES', current_step: 'voiceover' }))
     renderDetailPage()

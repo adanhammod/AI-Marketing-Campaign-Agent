@@ -1,0 +1,167 @@
+/*
+ * Shared "draft-honest" shape motifs for the 6 campaign asset types.
+ * One motif per pipeline stage, reused wherever that asset type needs a
+ * placeholder visual: AIOutputPreview (Create Campaign page) and the
+ * Home scroll hero's AssetEmergeCards both compose from this file so the
+ * marketing hero and the real in-app preview stay visually identical.
+ */
+
+/* Marketing Strategy — skeleton outline */
+.skeletonBars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.skeletonBars span {
+  display: block;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(79, 70, 229, 0.16);
+}
+
+.skeletonBars span:nth-child(1) {
+  width: 92%;
+}
+.skeletonBars span:nth-child(2) {
+  width: 78%;
+}
+.skeletonBars span:nth-child(3) {
+  width: 60%;
+}
+.skeletonBars span:nth-child(4) {
+  width: 40%;
+}
+
+/* Social Copy — caption draft */
+.captionDraft {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.captionGlyph {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  color: var(--color-cyan);
+}
+
+.captionBars {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: 0.2rem;
+}
+
+.captionBars span {
+  display: block;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: rgba(6, 182, 212, 0.2);
+}
+
+.captionBars span:nth-child(1) {
+  width: 95%;
+}
+.captionBars span:nth-child(2) {
+  width: 70%;
+}
+.captionBars span:nth-child(3) {
+  width: 50%;
+}
+
+/* Storyboard — blank shot grid */
+.shotGrid {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.shotGrid span {
+  flex: 1;
+  aspect-ratio: 4 / 3;
+  border: 1.5px dashed rgba(16, 185, 129, 0.35);
+  border-radius: var(--radius-sm);
+}
+
+/* Images — placeholder canvas with hover crossfade */
+.imageCanvas {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.imageCanvasBase,
+.imageCanvasHover {
+  position: absolute;
+  inset: 0;
+  transition: opacity 0.3s ease;
+}
+
+.imageCanvasBase {
+  background: linear-gradient(135deg, var(--color-coral-soft), rgba(251, 113, 86, 0.28));
+}
+
+.imageCanvasHover {
+  background: linear-gradient(135deg, rgba(251, 113, 86, 0.3), var(--color-amber-soft));
+  opacity: 0;
+}
+
+/* Voiceover — flat waveform */
+.waveform {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 36px;
+}
+
+.waveform span {
+  flex: 1;
+  border-radius: var(--radius-pill) var(--radius-pill) 0 0;
+  background: rgba(245, 158, 11, 0.4);
+}
+
+.waveform span:nth-child(1) {
+  height: 40%;
+}
+.waveform span:nth-child(2) {
+  height: 70%;
+}
+.waveform span:nth-child(3) {
+  height: 50%;
+}
+.waveform span:nth-child(4) {
+  height: 90%;
+}
+.waveform span:nth-child(5) {
+  height: 60%;
+}
+.waveform span:nth-child(6) {
+  height: 80%;
+}
+.waveform span:nth-child(7) {
+  height: 45%;
+}
+.waveform span:nth-child(8) {
+  height: 65%;
+}
+
+/* Final Video — featured play frame */
+.videoFrame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 21 / 9;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--color-emerald), var(--color-teal));
+}
+
+.videoPlay {
+  width: 2.5rem;
+  height: 2.5rem;
+  color: var(--color-surface);
+}
