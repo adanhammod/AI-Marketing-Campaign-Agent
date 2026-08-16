@@ -47,6 +47,8 @@ _PIPELINE_ORDER: tuple[WorkflowStep, ...] = (
     WorkflowStep.VIDEO,
 )
 
+_TERMINAL_STEP_STATUSES = (StepStatus.SUCCEEDED, StepStatus.REUSED, StepStatus.SKIPPED)
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessingResult:
@@ -122,7 +124,33 @@ class GraphJobProcessor(JobProcessor):
             return ProcessingResult(completed=True, marker=f"{message.operation.value}_COMPLETED")
         except BaseException as exc:
             step, error = (exc.step, exc.error) if isinstance(exc, NodeFailure) else (None, exc)
+            if step is None:
+                # A failure with no NodeFailure attribution happened between graph
+                # nodes -- e.g. this loop's own save_version() call above, not inside
+                # a with_failure_attribution-wrapped node -- so there is no step whose
+                # own execution failed. Derive the safe resume point from the durable
+                # per-step records with_step_tracking already writes, instead of
+                # leaving resume_step unset (see _last_completed_pipeline_step).
+                step = await self._last_completed_pipeline_step(current)
             return await self._fail(current, error, lease, step=step, correlation_id=message.correlation_id)
+
+    async def _last_completed_pipeline_step(self, version: CampaignVersion) -> WorkflowStep | None:
+        """The last step in _PIPELINE_ORDER with a terminal (SUCCEEDED/REUSED/SKIPPED)
+        WorkflowStepRecord -- i.e. the step whose output the failed save_version call
+        was trying to persist. Retry can safely treat that step as done: with_step_
+        tracking's own SUCCEEDED/REUSED/SKIPPED short-circuit (graph/boundary.py)
+        guarantees it will not be re-executed, so this never causes duplicate work
+        (e.g. a re-render of an already-uploaded video). Returns None only if no
+        pipeline step has completed at all, in which case there is genuinely nothing
+        to resume from and retry should stay blocked -- this must never be defaulted
+        to a fixed step.
+        """
+        last: WorkflowStep | None = None
+        for step in _PIPELINE_ORDER:
+            record = await self._repository.get_step(version.campaign_id, version.campaign_version, step)
+            if record is not None and record.status in _TERMINAL_STEP_STATUSES:
+                last = step
+        return last
 
     def _terminal_events(
         self, version: CampaignVersion, starting_status: CampaignStatus, correlation_id: UUID

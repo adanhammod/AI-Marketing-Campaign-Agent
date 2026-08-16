@@ -119,31 +119,36 @@ class DynamoDBWorkflowRepository(WorkflowRepository):
     async def heartbeat(
         self, message: SQSJobMessage, lease: LeaseContext, now: datetime, expires_at: datetime
     ) -> LeaseContext:
-        try:
-            response = await asyncio.to_thread(
-                self._client.update_item,
-                TableName=self._table_name,
-                Key=_marshal({"PK": pk(message.campaign_id), "SK": version_sk(message.campaign_version)}),
-                UpdateExpression="SET lease_heartbeat_at=:now, lease_expires_at=:expires ADD lock_version :one",
-                ConditionExpression=(
-                    "lease_owner=:owner AND lease_job_id=:job AND lease_expires_at>=:now AND lock_version=:lock"
-                ),
-                ExpressionAttributeValues={
-                    ":owner": _SERIALIZER.serialize(lease.owner),
-                    ":job": _SERIALIZER.serialize(str(message.job_id)),
-                    ":now": _SERIALIZER.serialize(_iso(now)),
-                    ":expires": _SERIALIZER.serialize(_iso(expires_at)),
-                    ":lock": _SERIALIZER.serialize(lease.lock_version),
-                    ":one": _SERIALIZER.serialize(1),
-                },
-                ReturnValues="UPDATED_NEW",
-            )
-        except ClientError as exc:
-            if self._conditional(exc):
-                raise LeaseLost("processing lease lost") from None
-            raise PersistenceUnavailable("lease heartbeat unavailable") from None
-        lock = int(_DESERIALIZER.deserialize(response["Attributes"]["lock_version"]))
-        return LeaseContext(owner=lease.owner, lock_version=lock, expires_at=expires_at)
+        # Held for the same lease.lock as save_version/complete/release below: this
+        # worker's own heartbeat and its own version/completion writes share one
+        # DynamoDB item's lock_version, so they must never be in flight at once (see
+        # LeaseContext.lock's docstring for the self-race this prevents).
+        async with lease.lock:
+            try:
+                response = await asyncio.to_thread(
+                    self._client.update_item,
+                    TableName=self._table_name,
+                    Key=_marshal({"PK": pk(message.campaign_id), "SK": version_sk(message.campaign_version)}),
+                    UpdateExpression="SET lease_heartbeat_at=:now, lease_expires_at=:expires ADD lock_version :one",
+                    ConditionExpression=(
+                        "lease_owner=:owner AND lease_job_id=:job AND lease_expires_at>=:now AND lock_version=:lock"
+                    ),
+                    ExpressionAttributeValues={
+                        ":owner": _SERIALIZER.serialize(lease.owner),
+                        ":job": _SERIALIZER.serialize(str(message.job_id)),
+                        ":now": _SERIALIZER.serialize(_iso(now)),
+                        ":expires": _SERIALIZER.serialize(_iso(expires_at)),
+                        ":lock": _SERIALIZER.serialize(lease.lock_version),
+                        ":one": _SERIALIZER.serialize(1),
+                    },
+                    ReturnValues="UPDATED_NEW",
+                )
+            except ClientError as exc:
+                if self._conditional(exc):
+                    raise LeaseLost("processing lease lost") from None
+                raise PersistenceUnavailable("lease heartbeat unavailable") from None
+            lock = int(_DESERIALIZER.deserialize(response["Attributes"]["lock_version"]))
+            return LeaseContext(owner=lease.owner, lock_version=lock, expires_at=expires_at)
 
     async def is_completed(self, message: SQSJobMessage) -> bool:
         return await self._get(pk(message.campaign_id), _completion_key(message)) is not None
@@ -187,35 +192,37 @@ class DynamoDBWorkflowRepository(WorkflowRepository):
                 }
             },
         ]
-        try:
-            await asyncio.to_thread(self._client.transact_write_items, TransactItems=transaction)
-        except ClientError as exc:
-            if self._conditional(exc):
-                raise LeaseLost("completion checkpoint conflict") from None
-            raise PersistenceUnavailable("completion persistence unavailable") from None
+        async with lease.lock:
+            try:
+                await asyncio.to_thread(self._client.transact_write_items, TransactItems=transaction)
+            except ClientError as exc:
+                if self._conditional(exc):
+                    raise LeaseLost("completion checkpoint conflict") from None
+                raise PersistenceUnavailable("completion persistence unavailable") from None
 
     async def release(self, message: SQSJobMessage, lease: LeaseContext) -> None:
-        try:
-            await asyncio.to_thread(
-                self._client.update_item,
-                TableName=self._table_name,
-                Key=_marshal({"PK": pk(message.campaign_id), "SK": version_sk(message.campaign_version)}),
-                UpdateExpression=(
-                    "REMOVE lease_owner, lease_acquired_at, lease_expires_at, lease_heartbeat_at, "
-                    "lease_job_id, lease_operation ADD lock_version :one"
-                ),
-                ConditionExpression="lease_owner=:owner AND lease_job_id=:job AND lock_version=:lock",
-                ExpressionAttributeValues={
-                    ":owner": _SERIALIZER.serialize(lease.owner),
-                    ":job": _SERIALIZER.serialize(str(message.job_id)),
-                    ":lock": _SERIALIZER.serialize(lease.lock_version),
-                    ":one": _SERIALIZER.serialize(1),
-                },
-            )
-        except ClientError as exc:
-            if self._conditional(exc):
-                raise LeaseLost("processing lease release conflict") from None
-            raise PersistenceUnavailable("lease release unavailable") from None
+        async with lease.lock:
+            try:
+                await asyncio.to_thread(
+                    self._client.update_item,
+                    TableName=self._table_name,
+                    Key=_marshal({"PK": pk(message.campaign_id), "SK": version_sk(message.campaign_version)}),
+                    UpdateExpression=(
+                        "REMOVE lease_owner, lease_acquired_at, lease_expires_at, lease_heartbeat_at, "
+                        "lease_job_id, lease_operation ADD lock_version :one"
+                    ),
+                    ConditionExpression="lease_owner=:owner AND lease_job_id=:job AND lock_version=:lock",
+                    ExpressionAttributeValues={
+                        ":owner": _SERIALIZER.serialize(lease.owner),
+                        ":job": _SERIALIZER.serialize(str(message.job_id)),
+                        ":lock": _SERIALIZER.serialize(lease.lock_version),
+                        ":one": _SERIALIZER.serialize(1),
+                    },
+                )
+            except ClientError as exc:
+                if self._conditional(exc):
+                    raise LeaseLost("processing lease release conflict") from None
+                raise PersistenceUnavailable("lease release unavailable") from None
 
     async def record_exhausted(self, message: SQSJobMessage, receive_count: int, now: datetime) -> None:
         item = {
@@ -309,42 +316,52 @@ class DynamoDBWorkflowRepository(WorkflowRepository):
         names = {f"#a{i}": key for i, key in enumerate(keys)}
         values = {f":a{i}": marshaled[key] for i, key in enumerate(keys)}
         values[":owner"] = _SERIALIZER.serialize(lease.owner)
-        values[":lock"] = _SERIALIZER.serialize(lease.lock_version)
         set_expression = "SET " + ", ".join(f"{name}=:a{i}" for i, name in enumerate(names))
         version_key = _marshal({"PK": pk(version.campaign_id), "SK": version_sk(version.campaign_version)})
-        if not events:
-            try:
-                await asyncio.to_thread(
-                    self._client.update_item,
-                    TableName=self._table_name,
-                    Key=version_key,
-                    UpdateExpression=set_expression,
-                    ConditionExpression="lease_owner=:owner AND lock_version=:lock",
-                    ExpressionAttributeNames=names,
-                    ExpressionAttributeValues=values,
-                )
-            except ClientError as exc:
-                if self._conditional(exc):
-                    raise LeaseLost("campaign version save conflict") from None
-                raise PersistenceUnavailable("version persistence unavailable") from None
-            return
+        # lease.lock_version is read inside the lock, immediately before dispatch: this
+        # serializes against heartbeat()/complete()/release() in this same process, which
+        # independently advance lock_version on this exact item. Without this, a concurrent
+        # heartbeat can commit its own ADD lock_version between this read and this update
+        # reaching DynamoDB, turning a healthy, still-owned lease into a spurious LeaseLost
+        # (a self-race, not a real takeover -- see LeaseContext.lock's docstring).
+        async with lease.lock:
+            values[":lock"] = _SERIALIZER.serialize(lease.lock_version)
+            if not events:
+                try:
+                    await asyncio.to_thread(
+                        self._client.update_item,
+                        TableName=self._table_name,
+                        Key=version_key,
+                        UpdateExpression=set_expression,
+                        ConditionExpression="lease_owner=:owner AND lock_version=:lock",
+                        ExpressionAttributeNames=names,
+                        ExpressionAttributeValues=values,
+                    )
+                except ClientError as exc:
+                    if self._conditional(exc):
+                        raise LeaseLost("campaign version save conflict") from None
+                    raise PersistenceUnavailable("version persistence unavailable") from None
+                return
 
-        def _raise_lease_lost() -> NoReturn:
-            raise LeaseLost("campaign version save conflict")
+            def _raise_lease_lost() -> NoReturn:
+                raise LeaseLost("campaign version save conflict")
 
-        state_item = {
-            "Update": {
-                "TableName": self._table_name,
-                "Key": version_key,
-                "UpdateExpression": set_expression,
-                "ConditionExpression": "lease_owner=:owner AND lock_version=:lock",
-                "ExpressionAttributeNames": names,
-                "ExpressionAttributeValues": values,
+            state_item = {
+                "Update": {
+                    "TableName": self._table_name,
+                    "Key": version_key,
+                    "UpdateExpression": set_expression,
+                    "ConditionExpression": "lease_owner=:owner AND lock_version=:lock",
+                    "ExpressionAttributeNames": names,
+                    "ExpressionAttributeValues": values,
+                }
             }
-        }
-        await self._write_state_with_events(
-            campaign_id=version.campaign_id, state_item=state_item, state_conflict=_raise_lease_lost, events=events
-        )
+            await self._write_state_with_events(
+                campaign_id=version.campaign_id,
+                state_item=state_item,
+                state_conflict=_raise_lease_lost,
+                events=events,
+            )
 
     async def _read_event_sequence(self, campaign_id: UUID) -> int:
         item = await self._get(pk(campaign_id), meta_sk())

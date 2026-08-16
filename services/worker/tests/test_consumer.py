@@ -4,12 +4,16 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import boto3
 import pytest
+from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 from campaign_contracts.api import CampaignCreationRequest
-from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata
+from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignConstraints, CampaignVersion, RetryMetadata
+from campaign_contracts.dynamodb import serialize_meta, serialize_version
 from campaign_contracts.enums import CampaignStatus, RevisionTarget, SQSOperation, WorkflowStep
 from campaign_contracts.sqs import SQSJobMessage
+from moto import mock_aws
 
 from campaign_worker.config import Settings
 from campaign_worker.consumer.sqs_consumer import MessageOutcome, SQSConsumer
@@ -20,6 +24,7 @@ from campaign_worker.errors import (
     PersistenceUnavailable,
     ProcessingUncertain,
 )
+from campaign_worker.repositories.dynamodb_workflow_repository import DynamoDBWorkflowRepository
 from campaign_worker.repositories.workflow_repository import LeaseContext, WorkflowRepository
 from campaign_worker.services.job_processor import JobProcessor, NoOpJobProcessor, ProcessingResult
 
@@ -677,6 +682,63 @@ async def test_run_retry_backoff_is_bounded_and_does_not_busy_spin():
     # A 0.05s fixed backoff over ~0.22s allows roughly 4-5 attempts. Hundreds of attempts
     # would mean the loop is busy-spinning instead of sleeping between retries.
     assert 2 <= queue.receives <= 8
+
+
+@pytest.mark.asyncio
+async def test_real_repository_heartbeat_lock_does_not_change_ack_timing():
+    """E: the lease.lock fix (services/worker/src/campaign_worker/repositories/
+    dynamodb_workflow_repository.py) is purely an internal serialization detail
+    inside DynamoDBWorkflowRepository -- it must not change when the consumer
+    deletes the SQS message. With a real (moto) DynamoDB-backed lease and several
+    real heartbeats firing during a slow processing step, the message must still
+    only be acknowledged after the processor completes and complete() succeeds."""
+    value = job()
+    ver = version(value)
+    serializer = TypeSerializer()
+
+    def marshal(item):
+        return {key: serializer.serialize(v) for key, v in item.items()}
+
+    with mock_aws():
+        client = boto3.client("dynamodb", region_name="us-east-1")
+        client.create_table(
+            TableName="campaign-test",
+            KeySchema=[{"AttributeName": "PK", "KeyType": "HASH"}, {"AttributeName": "SK", "KeyType": "RANGE"}],
+            AttributeDefinitions=[
+                {"AttributeName": "PK", "AttributeType": "S"},
+                {"AttributeName": "SK", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        aggregate = CampaignAggregateMetadata(
+            campaign_id=ver.campaign_id,
+            current_version=1,
+            title="Example",
+            created_at=ver.created_at,
+            updated_at=ver.updated_at,
+            lock_version=1,
+            current_status=CampaignStatus.QUEUED,
+            current_progress=2,
+        )
+        client.put_item(TableName="campaign-test", Item=marshal(serialize_meta(aggregate)))
+        client.put_item(TableName="campaign-test", Item=marshal(serialize_version(ver)))
+
+        repository = DynamoDBWorkflowRepository(client, "campaign-test")
+        queue = StubSQS([raw(value)])
+        processor = SlowProcessor(0.15)
+        consumer = SQSConsumer(
+            queue,
+            repository,
+            processor,
+            settings(heartbeat_interval_seconds=0.02, visibility_timeout_seconds=5),
+            "worker-a",
+        )
+
+        outcome = await consumer.process_raw(raw(value))
+
+        assert outcome == MessageOutcome.ACKNOWLEDGED
+        assert queue.deletes == ["opaque-receipt"]
+        assert queue.visibility >= 2, "several real heartbeats should have fired during the slow step"
 
 
 @pytest.mark.asyncio

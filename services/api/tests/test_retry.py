@@ -75,6 +75,37 @@ def test_retry_from_non_retryable_failed_rejected(client, repository, campaign_a
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "STATE_CONFLICT"
+
+
+def test_retry_with_missing_resume_step_is_rejected_without_mutation(
+    client, repository, queue, campaign_at_status, headers
+):
+    """A: a FAILED/retryable version whose resume_step is None -- e.g. a worker
+    failure that happened between graph nodes rather than inside one -- must be
+    rejected before any mutation. Checking resume_step only after committing the
+    FAILED->QUEUED transition (the pre-fix ordering) would leave the campaign stuck
+    QUEUED with a new job_id, an advanced lock_version, and a RETRY_SCHEDULED event,
+    but no resume point and no SQS message ever submitted."""
+    missing_resume_step = RetryMetadata(attempt=1, max_attempts=3, retryable=True, resume_step=None)
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.FAILED, retry=missing_resume_step))
+    before = asyncio.run(repository.get(campaign_id))
+    assert before is not None
+
+    response = _retry(client, campaign_id, 1, headers)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "STATE_CONFLICT"
+    after = asyncio.run(repository.get(campaign_id))
+    assert after is not None
+    before_aggregate, before_version = before
+    after_aggregate, after_version = after
+    assert after_version.status == CampaignStatus.FAILED
+    assert after_version.job_id == before_version.job_id
+    assert after_version.lock_version == before_version.lock_version
+    assert after_version.retry == before_version.retry
+    assert after_aggregate.lock_version == before_aggregate.lock_version
+    assert after_aggregate.event_sequence == before_aggregate.event_sequence
+    assert queue.messages() == []
     record = asyncio.run(repository.get(campaign_id))
     assert record is not None and record[1].status == CampaignStatus.FAILED
 

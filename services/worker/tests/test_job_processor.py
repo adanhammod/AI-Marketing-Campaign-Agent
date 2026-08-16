@@ -285,6 +285,26 @@ class _FailingStepRepository(_RecordingRepository):
         await super().save_step(record, events)
 
 
+class _FailingVersionSaveAfterStepRepository(_RecordingRepository):
+    """Fails save_version exactly once, on the first call whose version satisfies
+    should_fail -- simulating GraphJobProcessor.process()'s own save_version call
+    raising BETWEEN graph nodes (e.g. the real LeaseLost self-race the lease.lock
+    fix addresses), rather than inside a with_failure_attribution-wrapped node. No
+    NodeFailure is raised in this scenario, so step=None reaches the except handler
+    and must be derived from persisted step records instead."""
+
+    def __init__(self, should_fail) -> None:
+        super().__init__()
+        self._should_fail = should_fail
+        self._failed = False
+
+    async def save_version(self, version, lease, events=None):
+        if not self._failed and self._should_fail(version):
+            self._failed = True
+            raise RuntimeError("simulated between-node save conflict")
+        await super().save_version(version, lease, events)
+
+
 def _processor(
     image_provider=None, video_provider=None, is_cancelled=None, repository=None, creative_plan_provider=None
 ) -> GraphJobProcessor:
@@ -683,6 +703,96 @@ async def test_video_failure_records_video_as_the_resume_step():
     # progress made before the failing node (including images) is preserved
     assert final.strategy is not None
     assert len(final.image_artifacts) == 3
+
+
+@pytest.mark.asyncio
+async def test_between_node_failure_after_video_gets_video_as_resume_step():
+    """B: models the real Luna campaign -- render_video's own node succeeds (no
+    NodeFailure), but the OUTER save_version call in process()'s astream loop fails
+    (e.g. LeaseLost) before that chunk is durably persisted. There is no NodeFailure
+    to attribute this to, so resume_step must be derived from the durable per-step
+    records (VIDEO's WorkflowStepRecord is already SUCCEEDED by this point) instead
+    of being left None."""
+    repository = _FailingVersionSaveAfterStepRepository(lambda v: v.video_artifact is not None)
+    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
+    version = _version()
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    assert result.marker == "FAILURE_RECORDED"
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.FAILED
+    assert final.retry.resume_step == WorkflowStep.VIDEO
+    assert final.retry.retryable is True
+    assert final.error is not None
+    assert final.error.workflow_step == WorkflowStep.VIDEO
+    # the video artifact produced before the failing save is not lost
+    assert final.video_artifact is not None
+    steps = repository.steps
+    assert steps[(version.campaign_id, 1, WorkflowStep.VIDEO)].status == StepStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_between_node_failure_before_any_step_completes_leaves_resume_step_none():
+    """E: a between-node failure (no NodeFailure) with no completed pipeline step at
+    all must NOT be defaulted to a fixed step -- there is genuinely nothing safe to
+    resume from, so resume_step must stay None and retry must stay blocked (the API
+    ordering fix rejects a None resume_step before mutating anything)."""
+    repository = _FailingVersionSaveAfterStepRepository(lambda v: True)  # fails on the very first save_version call
+    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
+    version = _version()
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.FAILED
+    assert final.retry.resume_step is None
+
+
+@pytest.mark.asyncio
+async def test_retry_after_between_node_failure_does_not_rerender_existing_video():
+    """D: retrying after the Test B failure must not invoke the video provider
+    again -- with_step_tracking's own SUCCEEDED-skip (VIDEO's WorkflowStepRecord is
+    already durably SUCCEEDED) guarantees this. Models campaign_service.retry()'s
+    real resubmission: resume_step=VIDEO != PACKAGE -> operation=START, and the
+    version's status is reset FAILED->QUEUED exactly as retry() does before
+    resubmitting."""
+
+    class _CountingVideoProvider(VideoProvider):
+        def __init__(self) -> None:
+            self.calls = 0
+            self._inner = MockVideoProvider()
+
+        async def render_video(self, request):
+            self.calls += 1
+            return await self._inner.render_video(request)
+
+    repository = _FailingVersionSaveAfterStepRepository(lambda v: v.video_artifact is not None)
+    video_provider = _CountingVideoProvider()
+    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), video_provider)
+    version = _version()
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    first = await processor.process(message, version, _lease())
+    assert first.marker == "FAILURE_RECORDED"
+    assert video_provider.calls == 1
+    failed_version = repository.save_calls[-1]
+    assert failed_version.retry.resume_step == WorkflowStep.VIDEO
+
+    retry_version = failed_version.model_copy(update={"status": CampaignStatus.QUEUED})
+    retry_message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+    second = await processor.process(retry_message, retry_version, _lease())
+
+    assert second.completed is True
+    assert second.marker == "START_COMPLETED"
+    assert video_provider.calls == 1  # not re-invoked -- VIDEO was already SUCCEEDED
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.video_artifact == failed_version.video_artifact  # reused, not regenerated
 
 
 @pytest.mark.asyncio

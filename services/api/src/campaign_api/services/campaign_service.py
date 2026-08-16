@@ -421,6 +421,15 @@ class CampaignService:
         if current.status == CampaignStatus.FAILED:
             if not current.retry.retryable:
                 raise InvalidStateTransition("campaign is not in a retryable state")
+            # Validated here, before any mutation: a FAILED version can be
+            # retryable=True yet still have no usable resume point (e.g. a failure
+            # that happened between graph nodes rather than inside one -- see
+            # GraphJobProcessor._last_completed_pipeline_step). Checking only after
+            # self.repository.retry(...) below would let an unretriable campaign
+            # commit a real FAILED->QUEUED transition and then 409, leaving it stuck
+            # QUEUED with no resume point and no submitted job.
+            if current.retry.resume_step is None:
+                raise InvalidStateTransition("failed campaign is missing a resume step")
             try:
                 validate_transition(current.status, CampaignStatus.QUEUED)  # type: ignore[no-untyped-call]
             except ValueError as exc:
