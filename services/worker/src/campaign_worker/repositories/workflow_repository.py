@@ -1,5 +1,6 @@
+import asyncio
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
@@ -15,6 +16,12 @@ class LeaseContext:
     owner: str
     lock_version: int
     expires_at: datetime
+    # Serializes this worker's own heartbeat/save_version/complete/release calls
+    # against each other on this lease's DynamoDB item. Without it, a heartbeat's
+    # concurrent ADD lock_version can commit while a save_version request (built
+    # from a now-stale lock_version) is still in flight, turning a healthy,
+    # still-owned lease into a spurious LeaseLost (self-race, not a real takeover).
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class WorkflowRepository(ABC):

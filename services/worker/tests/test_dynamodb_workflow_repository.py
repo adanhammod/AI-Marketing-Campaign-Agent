@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -551,3 +553,176 @@ async def test_duplicate_event_does_not_swallow_a_real_lease_conflict(database):
     wrong_owner = lease.__class__("worker-b", lease.lock_version, lease.expires_at)
     with pytest.raises(LeaseLost):
         await repository.save_version(loaded, wrong_owner, [event])
+
+
+def _gate_update_item(client, *, skip_if):
+    """Wraps client.update_item so a call NOT matching skip_if (i.e. the call under
+    test) announces it has been dispatched and then blocks until released -- lets a
+    test force a concurrent second call to run and commit first, deterministically,
+    with no reliance on sleep-based timing."""
+    dispatched = threading.Event()
+    proceed = threading.Event()
+    original = client.update_item
+
+    def gated(**kwargs):
+        if skip_if(kwargs):
+            return original(**kwargs)
+        dispatched.set()
+        proceed.wait(timeout=5)
+        return original(**kwargs)
+
+    client.update_item = gated
+    return dispatched, proceed
+
+
+def _is_heartbeat_call(kwargs):
+    return "ADD lock_version" in kwargs.get("UpdateExpression", "")
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_and_save_version_do_not_self_race(database):
+    """A: reproduces the production LeaseLost("campaign version save conflict") --
+    save_version captures a lock_version, is still in flight when a concurrent
+    heartbeat commits its own ADD lock_version first, and (pre-fix) save_version's
+    now-stale request then loses the conditional check even though the same worker
+    still owns the lease throughout. With the lease.lock fix, heartbeat cannot even
+    dispatch its request until save_version has released the lock, so no interleaving
+    -- and no stale write -- ever occurs."""
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    updated = loaded.model_copy(update={"status": CampaignStatus.READY_FOR_REVIEW})
+
+    dispatched, proceed = _gate_update_item(client, skip_if=_is_heartbeat_call)
+
+    save_task = asyncio.create_task(repository.save_version(updated, lease))
+    await asyncio.to_thread(dispatched.wait, 5)
+    assert dispatched.is_set(), "save_version never dispatched its update_item call"
+
+    heartbeat_task = asyncio.create_task(
+        repository.heartbeat(message, lease, now + timedelta(seconds=1), now + timedelta(minutes=2))
+    )
+    await asyncio.sleep(0.05)
+    assert not heartbeat_task.done(), "heartbeat should be waiting on lease.lock while save_version is in flight"
+
+    proceed.set()
+    await save_task  # must not raise LeaseLost
+    refreshed = await heartbeat_task  # must not raise, runs only after save_version releases the lock
+
+    reloaded = await repository.load_version(message)
+    assert reloaded.status == CampaignStatus.READY_FOR_REVIEW
+    raw_item = client.get_item(TableName=TABLE, Key=marshal({"PK": pk(message.campaign_id), "SK": version_sk(1)}))[
+        "Item"
+    ]
+    assert int(DESERIALIZER.deserialize(raw_item["lock_version"])) == refreshed.lock_version
+
+
+@pytest.mark.asyncio
+async def test_in_process_lock_does_not_mask_a_real_takeover(database):
+    """B: post-fix regression guard -- the in-process lease.lock only ever serializes
+    this worker's own heartbeat/save/complete/release calls against each other. A
+    genuinely different actor (another worker, or the API's cancel()/replace_current(),
+    per test_already_running_worker_cannot_overwrite_a_concurrent_api_cancellation)
+    still commits independently of this worker's lease.lock, so a real stale
+    lock_version must still raise LeaseLost."""
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+
+    # Simulate a different actor bumping lock_version directly (not through this
+    # worker's lease.lock at all -- a separate DynamoDBWorkflowRepository instance
+    # with its own LeaseContext, exactly as a second real worker process would).
+    other_repository = DynamoDBWorkflowRepository(client, TABLE)
+    other_lease = await other_repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    await other_repository.heartbeat(message, other_lease, now + timedelta(seconds=1), now + timedelta(minutes=2))
+
+    with pytest.raises(LeaseLost):
+        await repository.save_version(loaded, lease)
+
+
+@pytest.mark.asyncio
+async def test_repeated_heartbeats_during_long_step_then_save_succeeds(database):
+    """C: several heartbeat cycles fire in sequence during a simulated long-running
+    graph step; the subsequent save_version must still succeed with a consistent
+    lock_version."""
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    updated = loaded.model_copy(update={"status": CampaignStatus.READY_FOR_REVIEW})
+
+    for i in range(5):
+        lease = await repository.heartbeat(
+            message, lease, now + timedelta(seconds=i + 1), now + timedelta(minutes=2)
+        )
+
+    await repository.save_version(updated, lease)
+
+    reloaded = await repository.load_version(message)
+    assert reloaded.status == CampaignStatus.READY_FOR_REVIEW
+    raw_item = client.get_item(TableName=TABLE, Key=marshal({"PK": pk(message.campaign_id), "SK": version_sk(1)}))[
+        "Item"
+    ]
+    assert int(DESERIALIZER.deserialize(raw_item["lock_version"])) == lease.lock_version
+
+
+def _gate_transact_write_items(client, *, only_when):
+    dispatched = threading.Event()
+    proceed = threading.Event()
+    original = client.transact_write_items
+
+    def gated(**kwargs):
+        if only_when(kwargs.get("TransactItems", [])):
+            dispatched.set()
+            proceed.wait(timeout=5)
+        return original(**kwargs)
+
+    client.transact_write_items = gated
+    return dispatched, proceed
+
+
+def _is_save_version_transaction(items):
+    return any(
+        "Update" in item
+        and "lock_version=:lock" in item["Update"].get("ConditionExpression", "")
+        and "ADD lock_version" not in item["Update"].get("UpdateExpression", "")
+        for item in items
+    )
+
+
+@pytest.mark.asyncio
+async def test_failure_path_save_with_events_does_not_self_race_with_heartbeat(database):
+    """D: the FAILED-transition save_version call (job_processor._fail -> save_version
+    with events, the transact_write_items branch) must not self-race with a concurrent
+    heartbeat either -- mirrors Test A but for the events-bearing code path."""
+    client, message = database
+    repository = DynamoDBWorkflowRepository(client, TABLE)
+    now = datetime.now(UTC)
+    lease = await repository.acquire_lease(message, "worker-a", now, now + timedelta(minutes=2))
+    loaded = await repository.load_version(message)
+    failed = loaded.model_copy(update={"status": CampaignStatus.FAILED})
+    event = event_for(message, CampaignEventType.FAILED, "1")
+
+    dispatched, proceed = _gate_transact_write_items(client, only_when=_is_save_version_transaction)
+
+    save_task = asyncio.create_task(repository.save_version(failed, lease, [event]))
+    await asyncio.to_thread(dispatched.wait, 5)
+    assert dispatched.is_set(), "save_version(events=...) never dispatched its transaction"
+
+    heartbeat_task = asyncio.create_task(
+        repository.heartbeat(message, lease, now + timedelta(seconds=1), now + timedelta(minutes=2))
+    )
+    await asyncio.sleep(0.05)
+    assert not heartbeat_task.done(), "heartbeat should be waiting on lease.lock while the failure save is in flight"
+
+    proceed.set()
+    await save_task  # must not raise LeaseLost
+    await heartbeat_task  # must not raise
+
+    reloaded = await repository.load_version(message)
+    assert reloaded.status == CampaignStatus.FAILED
