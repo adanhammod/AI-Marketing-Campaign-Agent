@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -51,6 +52,7 @@ def create_app(
         )
     else:
         app.state.artifact_signer = None
+        logging.getLogger(__name__).warning("artifact_bucket_not_configured")
 
     @app.middleware("http")
     async def request_context(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

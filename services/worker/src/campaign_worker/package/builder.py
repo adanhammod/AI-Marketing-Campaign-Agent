@@ -49,7 +49,7 @@ def build_package(
     campaign_copy: CampaignCopy,
     storyboard: Storyboard,
     images: list[tuple[int, bytes]],
-    audio: bytes,
+    audio: bytes | None,
     video: bytes,
     manifest: dict[str, Any],
     max_size_bytes: int,
@@ -66,7 +66,8 @@ def build_package(
         _write_member(archive, names["storyboard"], _json_bytes(storyboard.model_dump(mode="json")))
         for number, data in sorted(images, key=lambda item: item[0]):
             _write_member(archive, names["images"][number], data)
-        _write_member(archive, names["audio"], audio)
+        if audio is not None:
+            _write_member(archive, names["audio"], audio)
         _write_member(archive, names["video"], video)
         _write_member(archive, names["manifest"], _json_bytes(manifest))
 

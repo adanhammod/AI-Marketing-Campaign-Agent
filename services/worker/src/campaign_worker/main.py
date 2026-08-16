@@ -1,5 +1,6 @@
 import asyncio
 import signal
+from pathlib import Path
 from typing import Any
 
 import boto3  # type: ignore[import-untyped]
@@ -13,6 +14,11 @@ from .audio.processor import AudioProcessor
 from .config import Settings
 from .consumer.sqs_consumer import SQSConsumer
 from .errors import ConfigurationError
+from .graph.creative_plan_provider import (
+    BedrockCreativePlanProvider,
+    DeterministicCreativePlanProvider,
+    FallbackCreativePlanProvider,
+)
 from .health import build_health_app
 from .images.generative_pipeline import GenerativeImagePipeline
 from .images.pipeline import ImageAssetPipeline, StockImagePipeline
@@ -20,7 +26,7 @@ from .images.processor import ImageProcessor
 from .images.query_generator import BedrockQueryGenerator
 from .logging import configure_logging
 from .package.pipeline import PackageAssetPipeline, S3PackagePipeline
-from .providers.base import VideoProvider
+from .providers.base import CreativePlanProvider, VideoProvider
 from .providers.mock_image_provider import MockImageProvider
 from .providers.mock_package_pipeline import MockPackagePipeline
 from .providers.mock_video_provider import MockVideoProvider
@@ -30,6 +36,9 @@ from .providers.stability_client import StabilityImageClient
 from .repositories.dynamodb_workflow_repository import DynamoDBWorkflowRepository
 from .services.job_processor import GraphJobProcessor
 from .storage.s3_artifact_store import S3ArtifactStore
+from .video.ffmpeg_renderer import FfmpegVideoRenderer
+from .video.hyperframes_renderer import HyperFramesVideoRenderer
+from .video.models import VideoRenderer
 from .video.pipeline import FfmpegVideoPipeline, VideoAssetPipeline
 
 
@@ -44,13 +53,45 @@ def build_consumer(
 ) -> SQSConsumer:
     settings.validate()
     config = Config(connect_timeout=10, read_timeout=30, retries={"max_attempts": 0})
+    # SQS long-polls for up to settings.wait_time_seconds (20s max); it gets its own Config
+    # with a read_timeout that has real headroom above that, isolated from the shared
+    # config above so DynamoDB/Bedrock/S3/Polly timeout behavior is unaffected.
+    sqs_config = Config(
+        connect_timeout=settings.sqs_connect_timeout_seconds,
+        read_timeout=settings.sqs_read_timeout_seconds,
+        retries={"max_attempts": 0},
+    )
+    # Polly synthesis is a single synchronous call with no inherent expected-wait
+    # like SQS long polling, but a real production timeout (30s, the old shared
+    # read_timeout) was observed on a short (~30 word) narration -- it gets its
+    # own Config with more headroom, isolated from the shared config so
+    # DynamoDB/Bedrock/S3 timeout behavior is unaffected.
+    polly_config = Config(
+        connect_timeout=settings.polly_connect_timeout_seconds,
+        read_timeout=settings.polly_read_timeout_seconds,
+        retries={"max_attempts": 0},
+    )
     sqs = sqs_client or boto3.client(
-        "sqs", region_name=settings.aws_region, endpoint_url=settings.endpoint_url, config=config
+        "sqs", region_name=settings.aws_region, endpoint_url=settings.endpoint_url, config=sqs_config
     )
     dynamodb = dynamodb_client or boto3.client(
         "dynamodb", region_name=settings.aws_region, endpoint_url=settings.endpoint_url, config=config
     )
     repository = DynamoDBWorkflowRepository(dynamodb, settings.table_name or "")
+    # Independent of the image/voice/video real-vs-mock branch below: creative-plan
+    # generation runs regardless of which image provider ends up being used, and
+    # BedrockCreativePlanProvider failures already fall back to the deterministic
+    # generator on their own (see FallbackCreativePlanProvider), so there is no
+    # ConfigurationError path to catch here.
+    creative_plan_provider: CreativePlanProvider = DeterministicCreativePlanProvider()
+    if settings.bedrock_creative_plan_model_id:
+        creative_plan_bedrock = bedrock_client or boto3.client(
+            "bedrock-runtime", region_name=settings.aws_region, config=config
+        )
+        creative_plan_provider = FallbackCreativePlanProvider(
+            primary=BedrockCreativePlanProvider(creative_plan_bedrock, settings.bedrock_creative_plan_model_id),
+            fallback=DeterministicCreativePlanProvider(),
+        )
     if (
         settings.artifact_bucket
         and settings.bedrock_image_query_model_id
@@ -62,7 +103,7 @@ def build_consumer(
         s3 = s3_client or boto3.client(
             "s3", region_name=settings.aws_region, endpoint_url=settings.endpoint_url, config=config
         )
-        polly = polly_client or boto3.client("polly", region_name=settings.aws_region, config=config)
+        polly = polly_client or boto3.client("polly", region_name=settings.aws_region, config=polly_config)
         artifact_store = S3ArtifactStore(s3, settings.artifact_bucket)
 
         stock_pipeline: StockImagePipeline | None = None
@@ -120,6 +161,17 @@ def build_consumer(
         video_provider: VideoProvider | VideoAssetPipeline
         try:
             settings.validate_video_pipeline()
+            renderer: VideoRenderer
+            if settings.video_renderer_mode == "hyperframes":
+                renderer = HyperFramesVideoRenderer(
+                    npx_path=settings.npx_path,
+                    render_timeout_seconds=settings.video_render_timeout_seconds,
+                )
+            else:
+                renderer = FfmpegVideoRenderer(
+                    ffmpeg_path=settings.ffmpeg_path,
+                    render_timeout_seconds=settings.video_render_timeout_seconds,
+                )
             video_provider = FfmpegVideoPipeline(
                 s3,
                 artifact_store,
@@ -128,6 +180,9 @@ def build_consumer(
                 ffprobe_path=settings.ffprobe_path,
                 render_timeout_seconds=settings.video_render_timeout_seconds,
                 max_download_bytes=settings.video_max_download_bytes,
+                renderer=renderer,
+                music_path=Path(settings.cinematic_music_path) if settings.cinematic_music_path else None,
+                sfx_library_root=Path(settings.sfx_library_path) if settings.sfx_library_path else None,
             )
         except ConfigurationError:
             video_provider = MockVideoProvider()
@@ -139,7 +194,12 @@ def build_consumer(
             max_package_bytes=settings.package_max_bytes,
         )
         processor = GraphJobProcessor(
-            repository, image_pipeline, voice_pipeline, video_provider, package_pipeline=package_pipeline
+            repository,
+            image_pipeline,
+            voice_pipeline,
+            video_provider,
+            package_pipeline=package_pipeline,
+            creative_plan_provider=creative_plan_provider,
         )
     else:
         processor = GraphJobProcessor(
@@ -148,6 +208,7 @@ def build_consumer(
             MockVoiceProvider(),
             MockVideoProvider(),
             package_pipeline=MockPackagePipeline(),
+            creative_plan_provider=creative_plan_provider,
         )
     return SQSConsumer(sqs, repository, processor, settings)
 

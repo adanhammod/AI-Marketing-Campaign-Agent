@@ -11,6 +11,7 @@ prompt, expected credit cost, and output path, and getting explicit approval.
 """
 
 import os
+from pathlib import Path
 
 import httpx
 import pytest
@@ -38,3 +39,7 @@ async def test_stability_live_generation_produces_one_real_image():
 
     assert result.data
     assert result.content_type.startswith("image/")
+
+    output_path = Path("/tmp/stability-smoke-output.jpg")
+    output_path.write_bytes(result.data)
+    print(f"saved smoke-test image to {output_path}")

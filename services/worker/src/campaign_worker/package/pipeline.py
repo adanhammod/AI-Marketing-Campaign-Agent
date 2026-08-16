@@ -17,6 +17,7 @@ from campaign_contracts.enums import WorkflowStep
 from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.graph.boundary import NodeCancelled
 from campaign_worker.storage.artifact_store import PackageArtifactStore, StoredPackage
+from campaign_worker.video.audio_plan import audio_plan_for
 
 from .builder import build_package
 
@@ -65,6 +66,7 @@ def _fingerprint(version: CampaignVersion) -> str:
         "voice_checksum": version.voice_artifact.checksum_sha256 if version.voice_artifact else None,
         "video_checksum": version.video_artifact.checksum_sha256 if version.video_artifact else None,
         "approval_id": str(approval.approval_id) if approval is not None else None,
+        "video_style": version.brief.video_style.value,
         "package_format_version": _PACKAGE_FORMAT_VERSION,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -140,7 +142,7 @@ class S3PackagePipeline:
             raise ValueError("package assembly requires strategy, campaign_copy, and storyboard")
         if len(version.image_artifacts) != 3:
             raise ValueError("package assembly requires exactly three image artifacts")
-        if version.voice_artifact is None:
+        if audio_plan_for(version.brief.video_style).voiceover_required and version.voice_artifact is None:
             raise ValueError("package assembly requires a voice artifact")
         if version.video_artifact is None:
             raise ValueError("package assembly requires a video artifact")
@@ -157,7 +159,9 @@ class S3PackagePipeline:
             images.append((artifact.scene_number or 0, data))
             await self._checkpoint(is_cancelled, f"after_download_scene_{artifact.scene_number}")
 
-        audio = self._download(_audio_key(version.voice_artifact))
+        audio: bytes | None = None
+        if version.voice_artifact is not None:
+            audio = self._download(_audio_key(version.voice_artifact))
         await self._checkpoint(is_cancelled, "after_download_audio")
 
         video = self._download(_video_key(version.video_artifact))

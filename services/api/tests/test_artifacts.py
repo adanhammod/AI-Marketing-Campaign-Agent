@@ -13,7 +13,9 @@ from campaign_contracts.enums import CampaignStatus, WorkflowStep
 
 from campaign_api.artifacts.artifact_url_signer import ArtifactURLSigner
 from campaign_api.artifacts.s3_artifact_url_signer import S3ArtifactURLSigner
+from campaign_api.config import Settings
 from campaign_api.exceptions import RepositoryFailure
+from campaign_api.main import create_app
 
 
 class FakeSigner(ArtifactURLSigner):
@@ -401,6 +403,44 @@ def test_signer_failure_is_sanitized(client, app, campaign_at_status):
     assert response.json()["error"]["code"] == "STORAGE_UNAVAILABLE"
     assert "secret-bucket" not in response.text
     assert "authorization" not in response.text.lower()
+
+
+def test_artifacts_endpoint_returns_503_when_signer_not_configured(client, app, campaign_at_status):
+    # app fixture builds Settings() with no artifact_bucket, so create_app leaves
+    # app.state.artifact_signer as None -- this reproduces a real dev misconfiguration
+    # (CAMPAIGN_ARTIFACT_BUCKET missing from the API's .env) where the S3 key derivation
+    # and IAM permissions are fine but no signer was ever constructed at startup.
+    assert app.state.artifact_signer is None
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW))
+    record = asyncio.run(app.state.repository.get(campaign_id))
+    assert record is not None
+    aggregate, version = record
+    asyncio.run(
+        app.state.repository.replace_current(
+            aggregate,
+            version.model_copy(update={"image_artifacts": _images(campaign_id)}),
+        )
+    )
+
+    response = client.get(f"/api/v1/campaigns/{campaign_id}/artifacts")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "STORAGE_UNAVAILABLE"
+
+
+def test_settings_from_env_reads_artifact_bucket(monkeypatch):
+    monkeypatch.setenv("CAMPAIGN_ARTIFACT_BUCKET", "campaign-agent-dev-artifacts-228281126655")
+    settings = Settings.from_env()
+    assert settings.artifact_bucket == "campaign-agent-dev-artifacts-228281126655"
+
+
+def test_create_app_warns_when_artifact_bucket_is_not_configured(capsys):
+    # configure_logging() (invoked by create_app) replaces the root logger's handlers
+    # with a StreamHandler->stderr, which also strips pytest's caplog handler -- so this
+    # asserts on the actual JSON log line written to stderr rather than via caplog.
+    create_app(Settings(max_page_size=10))
+    captured = capsys.readouterr()
+    assert '"event": "artifact_bucket_not_configured"' in captured.err
 
 
 def test_s3_signer_uses_validated_identity_and_short_expiration():

@@ -9,12 +9,13 @@ from langgraph.graph.state import CompiledStateGraph
 from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.package.pipeline import PackageAssetPipeline
-from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
+from campaign_worker.providers.base import CreativePlanProvider, ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.repositories.workflow_repository import WorkflowRepository
 from campaign_worker.video.pipeline import VideoAssetPipeline
 
 from . import nodes as _nodes
 from .boundary import with_cancellation_check, with_failure_attribution, with_step_tracking
+from .creative_plan_provider import DeterministicCreativePlanProvider
 from .state import GraphState
 
 NodeFn = Callable[[GraphState], Awaitable[GraphState]]
@@ -72,6 +73,8 @@ def build_start_graph(
     image_provider: ImageProvider | ImageAssetPipeline,
     voice_provider: VoiceProvider | VoiceAssetPipeline,
     video_provider: VideoProvider | VideoAssetPipeline,
+    *,
+    creative_plan_provider: CreativePlanProvider | None = None,
 ) -> _CompiledGraph:
     def cancellable(name: str, fn: NodeFn) -> NodeFn:
         return with_cancellation_check(is_cancelled, name)(fn)
@@ -82,6 +85,9 @@ def build_start_graph(
         # with the WorkflowStep that was executing.
         return with_failure_attribution(step)(cancellable(name, with_step_tracking(step, repository)(fn)))
 
+    creative_plan_node = _nodes.make_create_creative_plan_node(
+        creative_plan_provider or DeterministicCreativePlanProvider()
+    )
     image_node = (
         _nodes.make_generate_images_node(image_provider)
         if isinstance(image_provider, ImageProvider)
@@ -106,6 +112,9 @@ def build_start_graph(
             "create_strategy": tracked_step("create_strategy", WorkflowStep.STRATEGY, _nodes.create_strategy),
             "generate_copy": tracked_step("generate_copy", WorkflowStep.COPY, _nodes.generate_copy),
             "create_storyboard": tracked_step("create_storyboard", WorkflowStep.STORYBOARD, _nodes.create_storyboard),
+            "create_creative_plan": tracked_step(
+                "create_creative_plan", WorkflowStep.CREATIVE_PLAN, creative_plan_node
+            ),
             "generate_images": tracked_step("generate_images", WorkflowStep.IMAGES, image_node),
             "generate_voiceover": tracked_step("generate_voiceover", WorkflowStep.VOICEOVER, voice_node),
             "render_video": tracked_step("render_video", WorkflowStep.VIDEO, video_node),
@@ -119,6 +128,7 @@ def build_start_graph(
             ("create_strategy",),
             ("generate_copy",),
             ("create_storyboard",),
+            ("create_creative_plan",),
             ("generate_images",),
             ("generate_voiceover",),
             ("render_video",),

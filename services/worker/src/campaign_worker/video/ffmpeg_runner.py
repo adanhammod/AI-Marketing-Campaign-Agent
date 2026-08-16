@@ -12,7 +12,7 @@ def _sanitize_stderr(stderr: bytes) -> str:
     return text[-_STDERR_TAIL_CHARS:]
 
 
-async def _run(
+async def run_subprocess(
     binary: str,
     args: list[str],
     *,
@@ -41,7 +41,7 @@ async def run_ffmpeg(
     timeout_seconds: float,
     unavailable_code: str = "VIDEO_PROVIDER_UNAVAILABLE",
 ) -> None:
-    _, stderr, returncode = await _run(
+    _, stderr, returncode = await run_subprocess(
         ffmpeg_path, args, timeout_seconds=timeout_seconds, unavailable_code=unavailable_code
     )
     if returncode != 0:
@@ -63,7 +63,7 @@ async def run_ffmpeg_capturing_stderr(
     # discarding it. Used by audio/normalizer.py to read the loudnorm
     # filter's measured-loudness JSON stats block, which ffmpeg only ever
     # prints to stderr -- never to stdout or the output file.
-    _, stderr, returncode = await _run(
+    _, stderr, returncode = await run_subprocess(
         ffmpeg_path, args, timeout_seconds=timeout_seconds, unavailable_code=unavailable_code
     )
     if returncode != 0:
@@ -83,7 +83,7 @@ async def run_ffprobe(
     extra_args: list[str] | None = None,
 ) -> dict[str, Any]:
     args = [*(extra_args or []), "-v", "error", "-print_format", "json", "-show_format", "-show_streams", file_path]
-    stdout, _, returncode = await _run(ffprobe_path, args, timeout_seconds=timeout_seconds)
+    stdout, _, returncode = await run_subprocess(ffprobe_path, args, timeout_seconds=timeout_seconds)
     if returncode != 0:
         raise WorkflowOperationError("INVALID_PROVIDER_OUTPUT", "ffprobe rejected the file", retryable=True)
     try:

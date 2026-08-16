@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +7,11 @@ from fastapi.testclient import TestClient
 from campaign_worker.audio.pipeline import PollyVoicePipeline
 from campaign_worker.config import Settings
 from campaign_worker.errors import ConfigurationError
+from campaign_worker.graph.creative_plan_provider import (
+    BedrockCreativePlanProvider,
+    DeterministicCreativePlanProvider,
+    FallbackCreativePlanProvider,
+)
 from campaign_worker.health import build_health_app
 from campaign_worker.images.generative_pipeline import GenerativeImagePipeline
 from campaign_worker.images.pipeline import StockImagePipeline
@@ -15,6 +21,8 @@ from campaign_worker.providers.mock_package_pipeline import MockPackagePipeline
 from campaign_worker.providers.mock_video_provider import MockVideoProvider
 from campaign_worker.providers.mock_voice_provider import MockVoiceProvider
 from campaign_worker.services.job_processor import GraphJobProcessor, NoOpJobProcessor
+from campaign_worker.video.ffmpeg_renderer import FfmpegVideoRenderer
+from campaign_worker.video.hyperframes_renderer import HyperFramesVideoRenderer
 from campaign_worker.video.pipeline import FfmpegVideoPipeline
 
 
@@ -150,6 +158,150 @@ def test_build_consumer_falls_back_to_mock_video_provider_when_asset_pipeline_is
     assert isinstance(consumer._processor._video_provider, MockVideoProvider)
 
 
+def test_build_consumer_defaults_to_the_ffmpeg_renderer():
+    consumer = build_consumer(
+        _settings(),
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    video_provider = consumer._processor._video_provider
+    assert isinstance(video_provider, FfmpegVideoPipeline)
+    assert isinstance(video_provider._renderer, FfmpegVideoRenderer)
+
+
+def test_build_consumer_wires_the_hyperframes_renderer_when_video_renderer_is_hyperframes():
+    settings = _settings(video_renderer_mode="hyperframes", npx_path=sys.executable)
+    consumer = build_consumer(
+        settings,
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    video_provider = consumer._processor._video_provider
+    assert isinstance(video_provider, FfmpegVideoPipeline)
+    assert isinstance(video_provider._renderer, HyperFramesVideoRenderer)
+
+
+def test_build_consumer_wires_cinematic_music_path_into_the_video_pipeline():
+    settings = _settings(cinematic_music_path="/opt/assets/music/bed.wav")
+    consumer = build_consumer(
+        settings,
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    video_provider = consumer._processor._video_provider
+    assert isinstance(video_provider, FfmpegVideoPipeline)
+    assert video_provider._music_path == Path("/opt/assets/music/bed.wav")
+
+
+def test_build_consumer_defaults_music_path_to_none_when_unset():
+    consumer = build_consumer(
+        _settings(),
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    assert consumer._processor._video_provider._music_path is None
+
+
+def test_build_consumer_wires_sfx_library_path_into_the_video_pipeline():
+    settings = _settings(sfx_library_path="/opt/assets/sfx")
+    consumer = build_consumer(
+        settings,
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    video_provider = consumer._processor._video_provider
+    assert isinstance(video_provider, FfmpegVideoPipeline)
+    assert video_provider._sfx_library_root == Path("/opt/assets/sfx")
+
+
+def test_build_consumer_defaults_sfx_library_root_to_none_when_unset():
+    consumer = build_consumer(
+        _settings(),
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    assert consumer._processor._video_provider._sfx_library_root is None
+
+
+def test_build_consumer_defaults_creative_plan_provider_to_deterministic_when_unset():
+    consumer = build_consumer(
+        _settings(),
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    assert isinstance(consumer._processor._creative_plan_provider, DeterministicCreativePlanProvider)
+
+
+def test_build_consumer_wires_bedrock_creative_plan_provider_with_fallback_when_configured():
+    consumer = build_consumer(
+        _settings(bedrock_creative_plan_model_id="test-creative-plan-model"),
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    provider = consumer._processor._creative_plan_provider
+    assert isinstance(provider, FallbackCreativePlanProvider)
+    assert isinstance(provider._primary, BedrockCreativePlanProvider)
+    assert provider._primary._model_id == "test-creative-plan-model"
+    assert isinstance(provider._fallback, DeterministicCreativePlanProvider)
+
+
+def test_build_consumer_wires_creative_plan_provider_even_in_all_mock_branch():
+    # bedrock_image_query_model_id/pexels/stability all unset -> the big
+    # if/else in build_consumer takes the all-mock branch for image/voice/
+    # video, but creative-plan generation is an independent gate.
+    consumer = build_consumer(
+        Settings(
+            aws_region="us-east-1",
+            queue_url="https://sqs.example/queue",
+            table_name="campaign-table",
+            bedrock_creative_plan_model_id="test-creative-plan-model",
+        ),
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+    )
+    provider = consumer._processor._creative_plan_provider
+    assert isinstance(provider, FallbackCreativePlanProvider)
+    assert isinstance(provider._primary, BedrockCreativePlanProvider)
+
+
+def test_build_consumer_falls_back_to_mock_video_provider_when_hyperframes_selected_but_npx_missing():
+    settings = _settings(video_renderer_mode="hyperframes", npx_path="/nonexistent/npx-xyz")
+    consumer = build_consumer(
+        settings,
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+        polly_client=object(),
+    )
+    assert isinstance(consumer._processor._video_provider, MockVideoProvider)
+
+
 def test_build_consumer_wires_a_real_s3_package_pipeline_when_the_asset_pipeline_is_configured():
     consumer = build_consumer(
         _settings(),
@@ -217,3 +369,37 @@ def test_build_consumer_raises_configuration_error_when_stock_mode_missing_pexel
             s3_client=object(),
             polly_client=object(),
         )
+
+
+def test_build_consumer_constructs_sqs_client_with_its_own_configured_timeouts():
+    # No sqs_client injected, so build_consumer must construct a real boto3 SQS client
+    # (a local, non-network operation) using the SQS-specific timeout settings, isolated
+    # from the shared Config used for DynamoDB/Bedrock/S3/Polly.
+    settings = _settings(
+        artifact_bucket=None,
+        pexels_api_key=None,
+        bedrock_image_query_model_id=None,
+        sqs_connect_timeout_seconds=15,
+        sqs_read_timeout_seconds=90,
+    )
+    consumer = build_consumer(settings, dynamodb_client=object())
+    client_config = consumer._client.meta.config
+    assert client_config.connect_timeout == 15
+    assert client_config.read_timeout == 90
+
+
+def test_build_consumer_constructs_polly_client_with_its_own_configured_timeouts():
+    # No polly_client injected, so build_consumer must construct a real boto3 Polly
+    # client (a local, non-network operation) using the Polly-specific timeout
+    # settings, isolated from the shared Config used for DynamoDB/Bedrock/S3.
+    settings = _settings(polly_connect_timeout_seconds=12, polly_read_timeout_seconds=90)
+    consumer = build_consumer(
+        settings,
+        sqs_client=object(),
+        dynamodb_client=object(),
+        bedrock_client=object(),
+        s3_client=object(),
+    )
+    client_config = consumer._processor._voice_provider._client.meta.config
+    assert client_config.connect_timeout == 12
+    assert client_config.read_timeout == 90

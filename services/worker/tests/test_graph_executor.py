@@ -7,6 +7,7 @@ from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, Re
 from campaign_contracts.enums import CampaignStatus, StepStatus, WorkflowStep
 from campaign_contracts.steps import WorkflowStepRecord
 
+from campaign_worker.graph.creative_plan_provider import DeterministicCreativePlanProvider
 from campaign_worker.graph.executor import (
     GraphExecutor,
     build_default_graph,
@@ -271,6 +272,7 @@ async def test_start_graph_runs_end_to_end_and_reaches_ready_for_review():
     assert result.strategy is not None
     assert result.campaign_copy is not None
     assert result.storyboard is not None
+    assert result.creative_video_plan is not None
     assert len(result.image_artifacts) == 3
     assert result.video_artifact is not None
 
@@ -296,11 +298,92 @@ async def test_start_graph_persists_every_tracked_step():
         WorkflowStep.STRATEGY,
         WorkflowStep.COPY,
         WorkflowStep.STORYBOARD,
+        WorkflowStep.CREATIVE_PLAN,
         WorkflowStep.IMAGES,
         WorkflowStep.VIDEO,
     ):
         record = repository.steps[(version.campaign_id, version.campaign_version, step)]
         assert record.status == StepStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_start_graph_runs_creative_plan_between_storyboard_and_images_in_order():
+    class _OrderTrackingRepository(_InMemoryStepRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.running_order: list[WorkflowStep] = []
+
+        async def save_step(self, record: WorkflowStepRecord, events=None) -> None:
+            if record.status == StepStatus.RUNNING:
+                self.running_order.append(record.step)
+            await super().save_step(record, events)
+
+    repository = _OrderTrackingRepository()
+    graph = build_start_graph(
+        repository, _never_cancelled, MockImageProvider(), MockVoiceProvider(), MockVideoProvider()
+    )
+    await GraphExecutor(graph).run(_version())
+
+    storyboard_index = repository.running_order.index(WorkflowStep.STORYBOARD)
+    creative_plan_index = repository.running_order.index(WorkflowStep.CREATIVE_PLAN)
+    images_index = repository.running_order.index(WorkflowStep.IMAGES)
+    assert storyboard_index < creative_plan_index < images_index
+
+
+@pytest.mark.asyncio
+async def test_start_graph_custom_creative_plan_provider_is_used_when_given():
+    class _SpyCreativePlanProvider(DeterministicCreativePlanProvider):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate(self, request):
+            self.calls += 1
+            return await super().generate(request)
+
+    spy = _SpyCreativePlanProvider()
+    graph = build_start_graph(
+        _InMemoryStepRepository(),
+        _never_cancelled,
+        MockImageProvider(),
+        MockVoiceProvider(),
+        MockVideoProvider(),
+        creative_plan_provider=spy,
+    )
+    await GraphExecutor(graph).run(_version())
+    assert spy.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_start_graph_replay_does_not_call_creative_plan_provider_again():
+    class _SpyCreativePlanProvider(DeterministicCreativePlanProvider):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate(self, request):
+            self.calls += 1
+            return await super().generate(request)
+
+    repository = _InMemoryStepRepository()
+    spy = _SpyCreativePlanProvider()
+    graph = build_start_graph(
+        repository,
+        _never_cancelled,
+        MockImageProvider(),
+        MockVoiceProvider(),
+        MockVideoProvider(),
+        creative_plan_provider=spy,
+    )
+    version = _version()
+    first_result = await GraphExecutor(graph).run(version)
+    assert spy.calls == 1
+    assert first_result.creative_video_plan is not None
+
+    # Replay with the same repository (every prior step already SUCCEEDED) and
+    # the already-populated version -- with_step_tracking must short-circuit
+    # CREATIVE_PLAN without invoking the provider again.
+    second_result = await GraphExecutor(graph).run(first_result)
+    assert spy.calls == 1
+    assert second_result.creative_video_plan == first_result.creative_video_plan
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,10 @@ class Settings:
     artifact_bucket: str | None = None
     pexels_api_key: str | None = None
     bedrock_image_query_model_id: str | None = None
+    # AI creative-plan generation (see graph/creative_plan_provider.py). Unset
+    # means the deterministic generator is used directly -- Bedrock generation
+    # is opt-in, and any Bedrock failure already falls back to it regardless.
+    bedrock_creative_plan_model_id: str | None = None
     pexels_candidate_count: int = 15
     image_http_timeout_seconds: float = 20
     image_max_download_bytes: int = 25_000_000
@@ -24,11 +28,22 @@ class Settings:
     stability_http_timeout_seconds: float = 60
     polly_voice_id: str | None = None
     polly_engine: str = "neural"
+    polly_connect_timeout_seconds: float = 10
+    polly_read_timeout_seconds: float = 60
     audio_normalize_timeout_seconds: float = 30
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
     video_render_timeout_seconds: float = 240
     video_max_download_bytes: int = 50_000_000
+    video_renderer_mode: str = "ffmpeg"
+    npx_path: str = "npx"
+    # Local/dev fallback only for the CINEMATIC_TEXT_AD video style -- not the
+    # production music-selection strategy (see video/audio_plan.py).
+    cinematic_music_path: str | None = None
+    # Local/dev SFX asset directory for video/audio_cue_library.py. Unset means
+    # no SFX library configured -- every AudioCueType is skipped gracefully
+    # rather than failing the render (SFX are optional, unlike music).
+    sfx_library_path: str | None = None
     package_max_bytes: int = 52_428_800
     table_name: str | None = None
     wait_time_seconds: int = 20
@@ -37,6 +52,10 @@ class Settings:
     heartbeat_interval_seconds: float = 60
     max_delivery_attempts: int = 4
     shutdown_grace_seconds: float = 30
+    sqs_connect_timeout_seconds: float = 10
+    sqs_read_timeout_seconds: float = 70
+    sqs_receive_retry_initial_backoff_seconds: float = 2
+    sqs_receive_retry_max_backoff_seconds: float = 30
     endpoint_url: str | None = None
     environment: str = "local"
     service_name: str = "campaign-worker"
@@ -53,6 +72,16 @@ class Settings:
             raise ConfigurationError("visibility timeout must exceed the heartbeat interval")
         if self.max_delivery_attempts < 1 or self.shutdown_grace_seconds <= 0:
             raise ConfigurationError("retry and shutdown bounds must be positive")
+        if self.sqs_connect_timeout_seconds <= 0 or self.sqs_read_timeout_seconds <= 0:
+            raise ConfigurationError("SQS client timeouts must be positive")
+        if self.sqs_read_timeout_seconds < self.wait_time_seconds + 10:
+            raise ConfigurationError("SQS read timeout must exceed the wait time by at least 10 seconds")
+        if self.sqs_receive_retry_initial_backoff_seconds <= 0 or self.sqs_receive_retry_max_backoff_seconds <= 0:
+            raise ConfigurationError("SQS receive retry backoff bounds must be positive")
+        if self.sqs_receive_retry_max_backoff_seconds < self.sqs_receive_retry_initial_backoff_seconds:
+            raise ConfigurationError("SQS receive retry max backoff must be at least the initial backoff")
+        if self.polly_connect_timeout_seconds <= 0 or self.polly_read_timeout_seconds <= 0:
+            raise ConfigurationError("Polly client timeouts must be positive")
         if self.endpoint_url and self.environment not in {"local", "test"}:
             raise ConfigurationError("endpoint URL is allowed only for local testing")
         if not 1 <= self.health_port <= 65535:
@@ -103,6 +132,15 @@ class Settings:
             raise ConfigurationError("video render timeout must be positive")
         if self.video_max_download_bytes < 1:
             raise ConfigurationError("video download bound must be positive")
+        if self.video_renderer_mode not in {"ffmpeg", "hyperframes"}:
+            raise ConfigurationError("VIDEO_RENDERER must be 'ffmpeg' or 'hyperframes'")
+        # HyperFrames (heygen-com/hyperframes, run locally via `npx`) is opt-in
+        # premium rendering -- fail fast at startup rather than only
+        # discovering a missing npx/Node toolchain mid-render.
+        if self.video_renderer_mode == "hyperframes" and shutil.which(self.npx_path) is None:
+            raise ConfigurationError(
+                f"npx binary '{self.npx_path}' was not found on PATH (required for VIDEO_RENDERER=hyperframes)"
+            )
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -113,6 +151,7 @@ class Settings:
             artifact_bucket=os.getenv("CAMPAIGN_ARTIFACT_BUCKET"),
             pexels_api_key=os.getenv("PEXELS_API_KEY"),
             bedrock_image_query_model_id=os.getenv("BEDROCK_IMAGE_QUERY_MODEL_ID"),
+            bedrock_creative_plan_model_id=os.getenv("BEDROCK_CREATIVE_PLAN_MODEL_ID"),
             pexels_candidate_count=int(os.getenv("PEXELS_CANDIDATE_COUNT", "15")),
             image_http_timeout_seconds=float(os.getenv("IMAGE_HTTP_TIMEOUT_SECONDS", "20")),
             image_max_download_bytes=int(os.getenv("IMAGE_MAX_DOWNLOAD_BYTES", "25000000")),
@@ -125,11 +164,17 @@ class Settings:
             stability_http_timeout_seconds=float(os.getenv("STABILITY_HTTP_TIMEOUT_SECONDS", "60")),
             polly_voice_id=os.getenv("POLLY_VOICE_ID"),
             polly_engine=os.getenv("POLLY_ENGINE", "neural"),
+            polly_connect_timeout_seconds=float(os.getenv("AWS_POLLY_CONNECT_TIMEOUT_SECONDS", "10")),
+            polly_read_timeout_seconds=float(os.getenv("AWS_POLLY_READ_TIMEOUT_SECONDS", "60")),
             audio_normalize_timeout_seconds=float(os.getenv("AUDIO_NORMALIZE_TIMEOUT_SECONDS", "30")),
             ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg"),
             ffprobe_path=os.getenv("FFPROBE_PATH", "ffprobe"),
             video_render_timeout_seconds=float(os.getenv("VIDEO_RENDER_TIMEOUT_SECONDS", "240")),
             video_max_download_bytes=int(os.getenv("VIDEO_MAX_DOWNLOAD_BYTES", "50000000")),
+            video_renderer_mode=os.getenv("VIDEO_RENDERER", "ffmpeg"),
+            npx_path=os.getenv("NPX_PATH", "npx"),
+            cinematic_music_path=os.getenv("CINEMATIC_MUSIC_PATH"),
+            sfx_library_path=os.getenv("SFX_LIBRARY_PATH"),
             package_max_bytes=int(os.getenv("PACKAGE_MAX_BYTES", "52428800")),
             wait_time_seconds=int(os.getenv("SQS_WAIT_TIME_SECONDS", "20")),
             batch_size=int(os.getenv("SQS_BATCH_SIZE", "1")),
@@ -137,6 +182,12 @@ class Settings:
             heartbeat_interval_seconds=float(os.getenv("WORKER_HEARTBEAT_INTERVAL_SECONDS", "60")),
             max_delivery_attempts=int(os.getenv("WORKER_MAX_DELIVERY_ATTEMPTS", "4")),
             shutdown_grace_seconds=float(os.getenv("WORKER_SHUTDOWN_GRACE_SECONDS", "30")),
+            sqs_connect_timeout_seconds=float(os.getenv("AWS_SQS_CONNECT_TIMEOUT_SECONDS", "10")),
+            sqs_read_timeout_seconds=float(os.getenv("AWS_SQS_READ_TIMEOUT_SECONDS", "70")),
+            sqs_receive_retry_initial_backoff_seconds=float(
+                os.getenv("SQS_RECEIVE_RETRY_INITIAL_BACKOFF_SECONDS", "2")
+            ),
+            sqs_receive_retry_max_backoff_seconds=float(os.getenv("SQS_RECEIVE_RETRY_MAX_BACKOFF_SECONDS", "30")),
             endpoint_url=os.getenv("AWS_ENDPOINT_URL"),
             environment=os.getenv("ENVIRONMENT", "local"),
             service_name=os.getenv("WORKER_SERVICE_NAME", "campaign-worker"),

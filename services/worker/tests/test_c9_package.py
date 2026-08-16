@@ -19,7 +19,7 @@ from campaign_contracts.campaign import (
     StoryboardScene,
     StrategyOutput,
 )
-from campaign_contracts.enums import CampaignStatus, WorkflowStep
+from campaign_contracts.enums import CampaignStatus, VideoStyle, WorkflowStep
 
 from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.graph.boundary import NodeCancelled
@@ -74,7 +74,13 @@ def _storyboard() -> Storyboard:
     )
 
 
-def _version(*, campaign_version: int = 2, approval: ApprovalRecord | None = None) -> CampaignVersion:
+def _version(
+    *,
+    campaign_version: int = 2,
+    approval: ApprovalRecord | None = None,
+    video_style: VideoStyle = VideoStyle.VOICEOVER_AD,
+    with_voice: bool = True,
+) -> CampaignVersion:
     now = datetime.now(UTC)
     brief = CampaignCreationRequest(
         business_name="Example Coffee",
@@ -85,6 +91,7 @@ def _version(*, campaign_version: int = 2, approval: ApprovalRecord | None = Non
         tone="bright",
         language="en-US",
         target_audience="Urban professionals",
+        video_style=video_style,
     )
     campaign_id = uuid4()
     image_artifacts = [
@@ -102,17 +109,19 @@ def _version(*, campaign_version: int = 2, approval: ApprovalRecord | None = Non
         )
         for n in (1, 2, 3)
     ]
-    voice_artifact = AudioArtifactReference(
-        artifact_id=uuid4(),
-        campaign_id=campaign_id,
-        campaign_version=campaign_version,
-        workflow_step=WorkflowStep.VOICEOVER,
-        mime_type="audio/mpeg",
-        size_bytes=4096,
-        checksum_sha256="b" * 64,
-        created_at=now,
-        provider="polly",
-    )
+    voice_artifact = None
+    if with_voice:
+        voice_artifact = AudioArtifactReference(
+            artifact_id=uuid4(),
+            campaign_id=campaign_id,
+            campaign_version=campaign_version,
+            workflow_step=WorkflowStep.VOICEOVER,
+            mime_type="audio/mpeg",
+            size_bytes=4096,
+            checksum_sha256="b" * 64,
+            created_at=now,
+            provider="polly",
+        )
     video_artifact = VideoArtifactReference(
         artifact_id=uuid4(),
         campaign_id=campaign_id,
@@ -264,6 +273,23 @@ def test_builder_is_deterministic_for_identical_inputs():
     assert first.checksum_sha256 == second.checksum_sha256
 
 
+def test_builder_omits_audio_member_when_audio_is_none():
+    built = _build(audio=None)
+    with zipfile.ZipFile(io.BytesIO(built.data)) as archive:
+        names = set(archive.namelist())
+    assert "campaign-v2/audio/voiceover.mp3" not in names
+    assert names == {
+        "campaign-v2/strategy.json",
+        "campaign-v2/copy.json",
+        "campaign-v2/storyboard.json",
+        "campaign-v2/images/scene-1.jpg",
+        "campaign-v2/images/scene-2.jpg",
+        "campaign-v2/images/scene-3.jpg",
+        "campaign-v2/video/final.mp4",
+        "campaign-v2/manifest.json",
+    }
+
+
 def test_builder_rejects_missing_or_mislabeled_scenes():
     with pytest.raises(ValueError, match="scene"):
         _build(images=[(1, b"a"), (2, b"b")])
@@ -395,7 +421,8 @@ def _populated_s3(version: CampaignVersion) -> _S3:
     s3 = _S3()
     for artifact in version.image_artifacts:
         s3.objects[_image_key(artifact)] = f"jpeg-{artifact.scene_number}".encode()
-    s3.objects[_audio_key(version.voice_artifact)] = b"fake-mp3-bytes"
+    if version.voice_artifact is not None:
+        s3.objects[_audio_key(version.voice_artifact)] = b"fake-mp3-bytes"
     s3.objects[_video_key(version.video_artifact)] = b"fake-mp4-bytes"
     return s3
 
@@ -452,6 +479,45 @@ async def test_pipeline_requires_voice_artifact():
     pipeline = _pipeline()
     with pytest.raises(ValueError, match="voice"):
         await pipeline.acquire(version, _never_cancelled)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_cinematic_text_ad_does_not_require_a_voice_artifact():
+    version = _version(video_style=VideoStyle.CINEMATIC_TEXT_AD, with_voice=False)
+    s3 = _populated_s3(version)
+    store = S3ArtifactStore(s3, "private-bucket")
+    pipeline = _pipeline(s3, store)
+
+    artifact = await pipeline.acquire(version, _never_cancelled)
+
+    assert artifact.workflow_step == WorkflowStep.PACKAGE
+
+
+@pytest.mark.asyncio
+async def test_pipeline_cinematic_text_ad_never_downloads_a_voiceover_file():
+    version = _version(video_style=VideoStyle.CINEMATIC_TEXT_AD, with_voice=False)
+    s3 = _populated_s3(version)  # no audio object uploaded -- would 404 if downloaded
+    store = S3ArtifactStore(s3, "private-bucket")
+    pipeline = _pipeline(s3, store)
+
+    # Would raise STORAGE_UNAVAILABLE if the pipeline still tried to download audio.
+    await pipeline.acquire(version, _never_cancelled)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_cinematic_text_ad_package_omits_the_audio_member():
+    version = _version(video_style=VideoStyle.CINEMATIC_TEXT_AD, with_voice=False)
+    s3 = _populated_s3(version)
+    store = S3ArtifactStore(s3, "private-bucket")
+    pipeline = _pipeline(s3, store)
+
+    await pipeline.acquire(version, _never_cancelled)
+
+    package_bytes = s3.objects[f"campaigns/{version.campaign_id}/versions/2/package/campaign.zip"]
+    with zipfile.ZipFile(io.BytesIO(package_bytes)) as archive:
+        names = set(archive.namelist())
+    assert "campaign-v2/audio/voiceover.mp3" not in names
+    assert "campaign-v2/video/final.mp4" in names
 
 
 @pytest.mark.asyncio

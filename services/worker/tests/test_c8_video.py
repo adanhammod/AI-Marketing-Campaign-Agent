@@ -305,6 +305,34 @@ def test_compositor_applies_fade_in_only_on_first_scene_and_fade_out_only_on_las
     assert "fade=t=out" in chains[2]
 
 
+def test_compositor_trims_every_scene_chain_to_its_own_duration():
+    # Regression test: zoompan's `d` parameter does not itself bound a
+    # chain's output frame count when fed a `-loop 1 -t <duration>` input --
+    # verified by rendering a chain with no bound past 1000 frames (33s+)
+    # for what should have been a 5.6s/168-frame scene. Without an explicit
+    # trim, concat drains the first (effectively unbounded) scene chain
+    # before ever reaching the second or third, so the video "shows only
+    # one image" for its entire length.
+    durations = [5.0, 4.25, 6.1]
+    args = build_render_args(
+        scene_image_paths=_scene_paths(),
+        scene_durations=durations,
+        audio_path="/tmp/render/voiceover.mp3",
+        output_path="/tmp/render/final.mp4",
+    )
+    filter_complex = args[args.index("-filter_complex") + 1]
+    chains = filter_complex.split(";")
+    for index, duration in enumerate(durations):
+        chain = chains[index]
+        assert f"trim=duration={duration:.3f}" in chain
+        assert "setpts=PTS-STARTPTS" in chain
+        # trim/setpts must land after zoompan but before any fade, so the
+        # bound applies to the whole chain, not just a post-fade remainder.
+        assert chain.index("zoompan=") < chain.index("trim=duration=") < chain.index("setpts=PTS-STARTPTS")
+        if "fade=" in chain:
+            assert chain.index("setpts=PTS-STARTPTS") < chain.index("fade=")
+
+
 def test_compositor_encodes_h264_aac_yuv420p_with_configured_fps():
     args = build_render_args(
         scene_image_paths=_scene_paths(),
@@ -549,11 +577,13 @@ async def test_pipeline_renders_and_stores_a_new_video():
     assert artifact.mime_type == "video/mp4"
     assert artifact.provider == "ffmpeg"
     assert artifact.artifact_id == deterministic_video_artifact_id(version.campaign_id, version.campaign_version)
-    assert len(runners.ffmpeg_calls) == 1
-    # 3 images in scene order + audio, matching the compositor's input contract.
-    render_args = runners.ffmpeg_calls[0]
+    # 2 ffmpeg invocations: the audio-mix passthrough, then the video composite.
+    assert len(runners.ffmpeg_calls) == 2
+    # 3 images in scene order + the mixed audio track (not the raw voiceover
+    # directly -- the renderer only ever sees the single final mixed audio file).
+    render_args = runners.ffmpeg_calls[-1]
     input_paths = [render_args[i + 1] for i, token in enumerate(render_args) if token == "-i"]
-    assert [p.split("/")[-1] for p in input_paths] == ["scene-1.jpg", "scene-2.jpg", "scene-3.jpg", "voiceover.mp3"]
+    assert [p.split("/")[-1] for p in input_paths] == ["scene-1.jpg", "scene-2.jpg", "scene-3.jpg", "audio-mix.m4a"]
 
 
 @pytest.mark.asyncio
@@ -590,9 +620,9 @@ async def test_pipeline_reconciles_existing_video_and_skips_ffmpeg():
     pipeline = _pipeline(s3, store, runners)
 
     first = await pipeline.acquire(version, _never_cancelled)
-    assert len(runners.ffmpeg_calls) == 1
+    assert len(runners.ffmpeg_calls) == 2
     second = await pipeline.acquire(version, _never_cancelled)
-    assert len(runners.ffmpeg_calls) == 1
+    assert len(runners.ffmpeg_calls) == 2
     assert second.artifact_id == first.artifact_id
     assert second.checksum_sha256 == first.checksum_sha256
 
@@ -619,7 +649,7 @@ async def test_pipeline_scales_scene_durations_to_match_real_audio_duration():
 
     await pipeline.acquire(version, _never_cancelled)
 
-    render_args = scaled_runners.ffmpeg_calls[0]
+    render_args = scaled_runners.ffmpeg_calls[-1]
     # Each of the 3 equal 5s scenes should scale by 13.5/15 = 0.9 -> 4.5s each.
     durations = [render_args[i + 1] for i, token in enumerate(render_args) if token == "-t"]
     assert durations == ["4.500", "4.500", "4.500"]
@@ -939,6 +969,26 @@ async def test_pipeline_cancellation_before_download():
 
 
 @pytest.mark.asyncio
+async def test_pipeline_cancellation_before_audio_mix():
+    version = _version()
+    s3 = _populated_s3(version)
+    store = S3ArtifactStore(s3, "private-bucket")
+    runners = _RecordingRunners()
+    pipeline = _pipeline(s3, store, runners)
+    calls = {"n": 0}
+
+    async def cancel_before_audio_mix():
+        calls["n"] += 1
+        # 1=before_download, then one per download (4), then before_ffprobe_audio, then before_audio_mix
+        return calls["n"] == 7
+
+    with pytest.raises(NodeCancelled) as error:
+        await pipeline.acquire(version, cancel_before_audio_mix)
+    assert "before_audio_mix" in str(error.value)
+    assert runners.ffmpeg_calls == []
+
+
+@pytest.mark.asyncio
 async def test_pipeline_cancellation_before_ffmpeg():
     version = _version()
     s3 = _populated_s3(version)
@@ -949,13 +999,15 @@ async def test_pipeline_cancellation_before_ffmpeg():
 
     async def cancel_before_ffmpeg():
         calls["n"] += 1
-        # 1=before_download, then one per download (4), then before_ffprobe_audio, then before_ffmpeg
-        return calls["n"] == 7
+        # 1=before_download, one per download (4), before_ffprobe_audio, before_audio_mix, before_ffmpeg
+        return calls["n"] == 8
 
     with pytest.raises(NodeCancelled) as error:
         await pipeline.acquire(version, cancel_before_ffmpeg)
     assert "before_ffmpeg" in str(error.value)
-    assert runners.ffmpeg_calls == []
+    # The audio-mix ffmpeg call already ran (its own checkpoint passed); only the
+    # video-render ffmpeg call is prevented by cancelling at this checkpoint.
+    assert len(runners.ffmpeg_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -969,7 +1021,7 @@ async def test_pipeline_cancellation_before_s3_upload():
 
     async def cancel_last():
         calls["n"] += 1
-        return calls["n"] == 9
+        return calls["n"] == 10
 
     with pytest.raises(NodeCancelled) as error:
         await pipeline.acquire(version, cancel_last)

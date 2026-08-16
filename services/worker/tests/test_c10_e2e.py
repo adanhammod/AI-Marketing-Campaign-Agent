@@ -525,6 +525,7 @@ async def test_redelivery_after_crash_before_step_record_reconciles_video_withou
         WorkflowStep.STRATEGY,
         WorkflowStep.COPY,
         WorkflowStep.STORYBOARD,
+        WorkflowStep.CREATIVE_PLAN,
         WorkflowStep.IMAGES,
         WorkflowStep.VOICEOVER,
     ):
@@ -536,11 +537,14 @@ async def test_redelivery_after_crash_before_step_record_reconciles_video_withou
             created_at=now,
             updated_at=now,
         )
-    # VIDEO step record deliberately absent.
-
+    # VIDEO step record deliberately absent. CREATIVE_PLAN is marked done (like
+    # every other prerequisite) so the graph reuses version.creative_video_plan
+    # (None here, matching a legacy pre-Slice-2 version) instead of regenerating
+    # a fresh plan mid-run -- which would otherwise change the video fingerprint
+    # computed below out from under this reconciliation check.
     s3 = _S3()
     store = S3ArtifactStore(s3, "private-bucket")
-    fingerprint = _video_fingerprint(version, version.storyboard)
+    fingerprint = _video_fingerprint(version, version.storyboard, music_checksum=None, sfx_checksums=[])
     checksum = hashlib.sha256(b"already-rendered-video").hexdigest()
     prefix = f"campaigns/{version.campaign_id}/versions/{version.campaign_version}/video/final"
     s3.objects[f"{prefix}.mp4"] = b"already-rendered-video"

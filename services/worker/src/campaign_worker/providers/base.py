@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 
-from .models import ImageGenerationRequest, ImageGenerationResult, VideoRenderRequest, VideoRenderResult
+from campaign_contracts.campaign import CreativeVideoPlan
+
+from .models import CreativePlanRequest, ImageGenerationRequest, ImageGenerationResult, VideoRenderRequest, VideoRenderResult
 from .voice_models import VoiceGenerationRequest, VoiceGenerationResult
 
 
@@ -17,3 +19,8 @@ class VideoProvider(ABC):
 class VoiceProvider(ABC):
     @abstractmethod
     async def generate_voice(self, request: VoiceGenerationRequest) -> VoiceGenerationResult: ...
+
+
+class CreativePlanProvider(ABC):
+    @abstractmethod
+    async def generate(self, request: CreativePlanRequest) -> CreativeVideoPlan: ...

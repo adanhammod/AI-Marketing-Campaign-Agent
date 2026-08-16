@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from campaign_contracts.enums import Actor, CampaignEventType, StepStatus, WorkflowStep
@@ -15,7 +16,12 @@ NodeFn = Callable[[GraphState], Awaitable[GraphState]]
 
 
 def _step_event(
-    state: GraphState, step: WorkflowStep, event_type: CampaignEventType, *, occurred_at: datetime
+    state: GraphState,
+    step: WorkflowStep,
+    event_type: CampaignEventType,
+    *,
+    occurred_at: datetime,
+    details: dict[str, Any] | None = None,
 ) -> CampaignEvent:
     version = state["version"]
     # version.retry.attempt only advances on a real handle_failure-driven retry cycle, so
@@ -35,6 +41,7 @@ def _step_event(
         actor=Actor.LANGGRAPH_WORKER,
         correlation_id=state.get("correlation_id") or uuid4(),
         job_id=version.job_id,
+        details=details or {},
     )
 
 
@@ -43,7 +50,7 @@ def with_step_tracking(step: WorkflowStep, repository: WorkflowRepository) -> Ca
         async def wrapped(state: GraphState) -> GraphState:
             version = state["version"]
             existing = await repository.get_step(version.campaign_id, version.campaign_version, step)
-            if existing is not None and existing.status in (StepStatus.SUCCEEDED, StepStatus.REUSED):
+            if existing is not None and existing.status in (StepStatus.SUCCEEDED, StepStatus.REUSED, StepStatus.SKIPPED):
                 return state
             now = datetime.now(UTC)
             await repository.save_step(
@@ -59,20 +66,45 @@ def with_step_tracking(step: WorkflowStep, repository: WorkflowRepository) -> Ca
                 [_step_event(state, step, CampaignEventType.STEP_STARTED, occurred_at=now)],
             )
             result = await fn(state)
+            skipped = bool(result.pop("_step_skipped", False))
+            skip_reason = result.pop("_skip_reason", None)
             completed_at = datetime.now(UTC)
-            await repository.save_step(
-                WorkflowStepRecord(
-                    campaign_id=version.campaign_id,
-                    campaign_version=version.campaign_version,
-                    step=step,
-                    status=StepStatus.SUCCEEDED,
-                    started_at=now,
-                    completed_at=completed_at,
-                    created_at=now,
-                    updated_at=completed_at,
-                ),
-                [_step_event(result, step, CampaignEventType.STEP_COMPLETED, occurred_at=completed_at)],
-            )
+            if skipped:
+                await repository.save_step(
+                    WorkflowStepRecord(
+                        campaign_id=version.campaign_id,
+                        campaign_version=version.campaign_version,
+                        step=step,
+                        status=StepStatus.SKIPPED,
+                        started_at=now,
+                        completed_at=completed_at,
+                        created_at=now,
+                        updated_at=completed_at,
+                    ),
+                    [
+                        _step_event(
+                            result,
+                            step,
+                            CampaignEventType.STEP_SKIPPED,
+                            occurred_at=completed_at,
+                            details={"reason": skip_reason} if skip_reason else None,
+                        )
+                    ],
+                )
+            else:
+                await repository.save_step(
+                    WorkflowStepRecord(
+                        campaign_id=version.campaign_id,
+                        campaign_version=version.campaign_version,
+                        step=step,
+                        status=StepStatus.SUCCEEDED,
+                        started_at=now,
+                        completed_at=completed_at,
+                        created_at=now,
+                        updated_at=completed_at,
+                    ),
+                    [_step_event(result, step, CampaignEventType.STEP_COMPLETED, occurred_at=completed_at)],
+                )
             return result
 
         return wrapped

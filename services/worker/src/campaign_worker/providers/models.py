@@ -3,6 +3,7 @@ from uuid import UUID
 
 from campaign_contracts.artifacts import ImageArtifactReference, PublicArtifactReference, VideoArtifactReference
 from campaign_contracts.campaign import ImagePrompt, Storyboard
+from campaign_contracts.enums import VideoStyle
 from campaign_contracts.errors import SanitizedWorkflowError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -54,3 +55,40 @@ class VideoRenderResult(BaseModel):
     completed_at: datetime
     artifact: VideoArtifactReference | None = None
     error: SanitizedWorkflowError | None = None
+
+
+class CreativePlanSceneContext(BaseModel):
+    """One storyboard scene's creative-relevant context -- no artifact/S3/DynamoDB details."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scene_number: int = Field(ge=1, le=3)
+    purpose: str
+    visual_prompt: str
+    narration: str
+
+
+class CreativePlanRequest(BaseModel):
+    """Everything a CreativePlanProvider needs to generate a CreativeVideoPlan.
+
+    Deliberately excludes AWS metadata, artifact IDs, S3 paths, and DynamoDB
+    internals -- only campaign-creative context that's meaningful to send to
+    an LLM (or to a deterministic generator, which uses the same shape).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    business_name: str
+    product_or_service: str
+    campaign_goal: str
+    platforms: list[str]
+    target_audience: str | None
+    tone: str
+    video_style: VideoStyle
+    strategy_objective: str
+    strategy_positioning: str
+    key_message: str
+    campaign_headline: str
+    call_to_action: str
+    scenes: list[CreativePlanSceneContext]
+    target_duration_seconds: int = Field(ge=1)

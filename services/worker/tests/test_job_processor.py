@@ -285,7 +285,9 @@ class _FailingStepRepository(_RecordingRepository):
         await super().save_step(record, events)
 
 
-def _processor(image_provider=None, video_provider=None, is_cancelled=None, repository=None) -> GraphJobProcessor:
+def _processor(
+    image_provider=None, video_provider=None, is_cancelled=None, repository=None, creative_plan_provider=None
+) -> GraphJobProcessor:
     repository = repository or _RecordingRepository()
     processor = GraphJobProcessor(
         repository,
@@ -293,6 +295,7 @@ def _processor(image_provider=None, video_provider=None, is_cancelled=None, repo
         MockVoiceProvider(),
         video_provider or MockVideoProvider(),
         is_cancelled=is_cancelled,
+        creative_plan_provider=creative_plan_provider,
     )
     return repository, processor
 
@@ -311,6 +314,7 @@ async def test_start_processes_full_pipeline_and_reaches_ready_for_review():
     assert final.strategy is not None
     assert final.campaign_copy is not None
     assert final.storyboard is not None
+    assert final.creative_video_plan is not None
     assert len(final.image_artifacts) == 3
     assert final.video_artifact is not None
     emitted = [event.event_type for events in repository.version_events for event in events]
@@ -343,6 +347,7 @@ async def test_start_persisted_steps_are_step_tracked_for_skip_reuse():
         WorkflowStep.STRATEGY,
         WorkflowStep.COPY,
         WorkflowStep.STORYBOARD,
+        WorkflowStep.CREATIVE_PLAN,
         WorkflowStep.IMAGES,
         WorkflowStep.VIDEO,
     ):
@@ -451,14 +456,47 @@ async def test_regenerate_storyboard_seeds_strategy_and_copy_as_reused():
         assert repository.steps[(version.campaign_id, version.campaign_version, step)].status == StepStatus.REUSED
         assert step not in repository.running_steps
     assert WorkflowStep.STORYBOARD in repository.running_steps
+    # Dependency rule: CREATIVE_PLAN comes after STORYBOARD in pipeline order, so it must
+    # NOT be seeded REUSED here -- it must run fresh against the newly regenerated
+    # storyboard rather than incorrectly reusing a plan built from the stale one.
+    assert (
+        repository.steps[(version.campaign_id, version.campaign_version, WorkflowStep.CREATIVE_PLAN)].status
+        == StepStatus.SUCCEEDED
+    )
+    assert WorkflowStep.CREATIVE_PLAN in repository.running_steps
     final = repository.save_calls[-1]
     assert final.status == CampaignStatus.READY_FOR_REVIEW
     assert final.strategy == version.strategy
     assert final.campaign_copy == version.campaign_copy
+    assert final.creative_video_plan is not None
+
+
+def _creative_video_plan():
+    from campaign_contracts.campaign import CreativeVideoPlan, VideoShot
+    from campaign_contracts.enums import AssetRole, CameraMotion, ShotRole, TransitionType
+
+    return CreativeVideoPlan(
+        concept="Cold brew, delivered",
+        visual_style="bright, modern, premium",
+        total_duration_seconds=15,
+        shots=[
+            VideoShot(
+                shot_number=1,
+                role=ShotRole.HOOK,
+                source_scene_number=1,
+                asset_role=AssetRole.HERO_PRODUCT,
+                visual_description="Close crop hook",
+                duration_seconds=15.0,
+                text="Cold brew",
+                camera_motion=CameraMotion.PUSH_IN,
+                transition_in=TransitionType.CUT,
+            )
+        ],
+    )
 
 
 @pytest.mark.asyncio
-async def test_regenerate_video_seeds_strategy_copy_storyboard_images_and_voice_as_reused():
+async def test_regenerate_video_seeds_strategy_copy_storyboard_creative_plan_images_and_voice_as_reused():
     repository, processor = _processor(repository=_TrackingRepository())
     campaign_id = uuid4()
     version = _version(
@@ -466,6 +504,7 @@ async def test_regenerate_video_seeds_strategy_copy_storyboard_images_and_voice_
         strategy=_strategy_output(),
         copy=_campaign_copy(),
         storyboard=_storyboard_output(),
+        creative_video_plan=_creative_video_plan(),
         image_artifacts=_image_artifacts(campaign_id, 1),
         # A VIDEO-scope revision must carry the parent's voice_artifact forward (mirroring
         # what campaign_service.revise() does on the API side) -- otherwise render_video has
@@ -487,6 +526,7 @@ async def test_regenerate_video_seeds_strategy_copy_storyboard_images_and_voice_
         WorkflowStep.STRATEGY,
         WorkflowStep.COPY,
         WorkflowStep.STORYBOARD,
+        WorkflowStep.CREATIVE_PLAN,
         WorkflowStep.IMAGES,
         WorkflowStep.VOICEOVER,
     ):
@@ -497,6 +537,7 @@ async def test_regenerate_video_seeds_strategy_copy_storyboard_images_and_voice_
     assert final.status == CampaignStatus.READY_FOR_REVIEW
     assert final.image_artifacts == version.image_artifacts  # preserved, not regenerated
     assert final.voice_artifact == version.voice_artifact  # preserved, not regenerated
+    assert final.creative_video_plan == version.creative_video_plan  # preserved, not regenerated
     assert final.video_artifact is not None
 
 

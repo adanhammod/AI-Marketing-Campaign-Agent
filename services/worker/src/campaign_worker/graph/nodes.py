@@ -17,16 +17,19 @@ from campaign_contracts.campaign import (
 from campaign_contracts.enums import CampaignStatus, ErrorComponent, WorkflowStep
 from campaign_contracts.errors import SanitizedWorkflowError
 
+from campaign_worker.audio import narration_timing
 from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.package.pipeline import PackageAssetPipeline
-from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
+from campaign_worker.providers.base import CreativePlanProvider, ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.models import ImageGenerationRequest, VideoRenderRequest
 from campaign_worker.providers.voice_models import VoiceGenerationRequest
+from campaign_worker.video.audio_plan import audio_plan_for
 from campaign_worker.video.pipeline import VideoAssetPipeline
 
 from .boundary import NodeCancelled, NodeFn
+from .creative_plan_provider import build_creative_plan_request
 from .state import GraphState, ReviewPackageValidationResult
 
 
@@ -81,23 +84,104 @@ async def generate_copy(state: GraphState) -> GraphState:
     return {"version": version.model_copy(update={"campaign_copy": copy})}
 
 
+def _first_complete_sentence(text: str) -> str:
+    # The whole first sentence, up to and including its own terminal '.',
+    # '!', or '?'. Never slices mid-word/mid-clause: if a field contains
+    # multiple sentences, later ones are simply dropped (a complete
+    # standalone sentence, not a fragment); if it contains no terminal
+    # punctuation at all, the entire text is kept as-is (plus a trailing
+    # period), never cut short.
+    text = text.strip()
+    for index, char in enumerate(text):
+        if char in ".!?":
+            return text[: index + 1]
+    return f"{text}." if text else text
+
+
 def _scene_narration(scene_number: int, brief: NormalizedCampaignBrief, strategy: StrategyOutput) -> str:
     # Deterministic, distinct-per-scene narration built from existing brief/
     # strategy fields (no LLM call). Scene 2 deliberately does not narrate
     # strategy.audience: it's a targeting spec (e.g. "aged 22-40"), not ad
     # copy -- no real 15-second ad reads a demographic aloud, and narrating
     # it verbatim caused the real Luna production incident's flat,
-    # read-aloud delivery. Sized so combined narration lands safely inside
-    # the storyboard's 13-17s constraint with margin for the SSML pacing
-    # breaks inserted between scenes during synthesis (audio/pipeline.py).
+    # read-aloud delivery. product_or_service/business_name are names and
+    # are never modified here -- cutting a name mid-word/mid-phrase is never
+    # acceptable, even under duration pressure (see _apply_duration_budget,
+    # which only ever *extends* narration, never trims it). key_message/CTA
+    # can be free-form prose, so only their first complete sentence is used
+    # -- dropping any trailing sentences is safe (what remains still reads
+    # as a complete, standalone thought), unlike cutting mid-sentence.
+    product = brief.product_or_service
+    business_name = brief.business_name
     if scene_number == 1:
-        return f"Meet {brief.product_or_service}, made by {brief.business_name}."
+        return f"Meet {product}, made by {business_name}."
     if scene_number == 2:
-        key_message = strategy.key_message.rstrip()
-        suffix = "" if key_message.endswith((".", "!", "?")) else "."
-        return f"{key_message}{suffix} You'll love it, too."
-    cta = brief.call_to_action or "Learn more"
-    return f"{cta} Explore {brief.product_or_service} from {brief.business_name} today."
+        key_message = _first_complete_sentence(strategy.key_message)
+        return f"{key_message} You'll love it, too."
+    cta = _first_complete_sentence(brief.call_to_action or "Learn more")
+    return f"{cta} Explore {product} from {business_name} today."
+
+
+def _extension_candidates(brief: NormalizedCampaignBrief) -> list[str]:
+    # Real, campaign-specific complete sentences available to extend short
+    # narration toward the target word band -- not repeated/arbitrary
+    # filler, and never a truncated fragment of one. business_description
+    # and tone are both required brief fields (always present, unlike
+    # optional target_audience/key_message/CTA), and neither is used
+    # anywhere else in narration, so this is genuinely new content.
+    # target_audience/strategy.audience is deliberately never used here:
+    # narrating a raw targeting spec caused the real Luna production
+    # incident (see _scene_narration above and its regression tests).
+    # Each candidate here is a *naturally* differently-sized complete
+    # sentence (not manufactured short/medium/long variants of the same
+    # content) -- the fill algorithm below picks whichever complete
+    # candidate best fits the remaining budget.
+    description = _first_complete_sentence(brief.business_description)
+    tone_sentence = f"It's {brief.tone.strip()}."
+    return [description, tone_sentence]
+
+
+def _best_fitting_candidate(candidates: list[str], remaining_words: int, used: set[str]) -> str | None:
+    """The longest not-yet-used complete candidate that fits within
+    remaining_words -- never a truncated one. Returns None (add nothing)
+    if not even the shortest available complete candidate fits; forcing a
+    too-long candidate in by cutting it is never an acceptable fallback."""
+    fitting = [c for c in candidates if c and c not in used and narration_timing.word_count(c) <= remaining_words]
+    if not fitting:
+        return None
+    return max(fitting, key=narration_timing.word_count)
+
+
+def _apply_duration_budget(narrations: list[str], brief: NormalizedCampaignBrief) -> list[str]:
+    """Couples narration length to the campaign's fixed duration constraint
+    before Polly is ever called, by *extending* narration estimated too
+    short with real, complete, appropriately-sized content (never by
+    trimming/cutting anything -- see _best_fitting_candidate). Targets the
+    preferred inner band from audio/narration_timing.py. Narration that's
+    already at or above that band (e.g. from an unusually long business
+    name or key_message) is left completely untouched: the hard 13-17s
+    constraint, enforced later and unchanged in video/pipeline.py, remains
+    the final arbiter for such cases rather than this best-effort sizing
+    step ever mangling real campaign content to force a fit."""
+    narrations = list(narrations)
+    min_words, max_words = narration_timing.target_word_range()
+    total = sum(narration_timing.word_count(n) for n in narrations)
+    if total >= min_words:
+        return narrations
+
+    candidates = _extension_candidates(brief)
+    used: set[str] = set()
+    for index in (0, 2):  # scenes 1 and 3; scene 2 stays anchored to key_message
+        if total >= min_words:
+            break
+        candidate = _best_fitting_candidate(candidates, max_words - total, used)
+        if candidate is None:
+            continue
+        narrations[index] = f"{narrations[index]} {candidate}".strip()
+        total += narration_timing.word_count(candidate)
+        used.add(candidate)
+
+    return narrations
 
 
 async def create_storyboard(state: GraphState) -> GraphState:
@@ -105,12 +189,16 @@ async def create_storyboard(state: GraphState) -> GraphState:
     strategy = version.strategy
     if strategy is None:
         raise ValueError("create_storyboard requires create_strategy to have run first")
+    narrations = _apply_duration_budget(
+        [_scene_narration(index, version.brief, strategy) for index in (1, 2, 3)],
+        version.brief,
+    )
     scenes = [
         StoryboardScene(
             scene_number=index,
             purpose=f"Scene {index} for {strategy.objective}",
             duration_seconds=5,
-            narration=_scene_narration(index, version.brief, strategy),
+            narration=narrations[index - 1],
             visual_prompt=f"{version.brief.product_or_service}, scene {index}",
             transition="cut",
         )
@@ -118,6 +206,26 @@ async def create_storyboard(state: GraphState) -> GraphState:
     ]
     storyboard = Storyboard(scenes=scenes, total_duration_seconds=15)
     return {"version": version.model_copy(update={"storyboard": storyboard})}
+
+
+def make_create_creative_plan_node(provider: CreativePlanProvider) -> NodeFn:
+    async def create_creative_plan(state: GraphState) -> GraphState:
+        version = state["version"]
+        storyboard = version.storyboard
+        if storyboard is None:
+            raise ValueError("create_creative_plan requires create_storyboard to have run first")
+        strategy = version.strategy
+        if strategy is None:
+            raise ValueError("create_creative_plan requires create_strategy to have run first")
+        campaign_copy = version.campaign_copy
+        if campaign_copy is None:
+            raise ValueError("create_creative_plan requires generate_copy to have run first")
+
+        request = build_creative_plan_request(version)
+        plan = await provider.generate(request)
+        return {"version": version.model_copy(update={"creative_video_plan": plan})}
+
+    return create_creative_plan
 
 
 def make_generate_images_node(provider: ImageProvider) -> NodeFn:
@@ -154,9 +262,19 @@ def make_acquire_images_node(pipeline: ImageAssetPipeline, is_cancelled: Callabl
     return acquire_images
 
 
+def _skip_voiceover(version: CampaignVersion) -> GraphState:
+    return {
+        "version": version,
+        "_step_skipped": True,
+        "_skip_reason": f"video_style={version.brief.video_style.value}",
+    }
+
+
 def make_generate_voiceover_node(provider: VoiceProvider) -> NodeFn:
     async def generate_voiceover(state: GraphState) -> GraphState:
         version = state["version"]
+        if not audio_plan_for(version.brief.video_style).voiceover_required:
+            return _skip_voiceover(version)
         storyboard = version.storyboard
         if storyboard is None:
             raise ValueError("generate_voiceover requires create_storyboard to have run first")
@@ -177,6 +295,8 @@ def make_generate_voiceover_node(provider: VoiceProvider) -> NodeFn:
 def make_acquire_voiceover_node(pipeline: VoiceAssetPipeline, is_cancelled: Callable[[], Awaitable[bool]]) -> NodeFn:
     async def acquire_voiceover(state: GraphState) -> GraphState:
         version = state["version"]
+        if not audio_plan_for(version.brief.video_style).voiceover_required:
+            return _skip_voiceover(version)
         artifact = await pipeline.acquire(version, is_cancelled)
         return {"version": version.model_copy(update={"voice_artifact": artifact})}
 
@@ -230,7 +350,7 @@ async def validate_review_package(state: GraphState) -> GraphState:
         missing.append("storyboard")
     if not version.image_artifacts:
         missing.append("image_artifacts")
-    if version.voice_artifact is None:
+    if audio_plan_for(version.brief.video_style).voiceover_required and version.voice_artifact is None:
         missing.append("voice_artifact")
     if version.video_artifact is None:
         missing.append("video_artifact")

@@ -6,12 +6,14 @@ from uuid import UUID, uuid4
 import pytest
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata, StrategyOutput
-from campaign_contracts.enums import CampaignStatus, ErrorComponent, StepStatus, WorkflowStep
+from campaign_contracts.enums import CampaignStatus, ErrorComponent, StepStatus, VideoStyle, WorkflowStep
 from campaign_contracts.errors import SanitizedWorkflowError
 from campaign_contracts.steps import WorkflowStepRecord
 
+from campaign_worker.audio import narration_timing
 from campaign_worker.graph import nodes
 from campaign_worker.graph.boundary import NodeCancelled, with_step_tracking
+from campaign_worker.graph.creative_plan_provider import DeterministicCreativePlanProvider
 from campaign_worker.graph.state import GraphState
 from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.mock_image_provider import MockImageProvider
@@ -257,12 +259,259 @@ def test_scene_narration_is_deterministic():
     assert len(set(first)) == 3
 
 
+def _very_short_brief(**overrides):
+    # Short but real content -- not the absolute schema-legal minimum
+    # (2-char fields), which is a documented residual edge case that this
+    # word-count mechanism alone cannot always guarantee reaches the target
+    # band without fabricating unnatural filler (see narration_timing.py).
+    defaults = dict(
+        business_name="Zola Tea",
+        product_or_service="Herbal Tea Blends",
+        business_description="A cozy neighborhood tea shop with hand-blended herbal teas.",
+        campaign_goal="Grow local tea sales.",
+        platforms=["instagram"],
+        tone="Warm and cozy",
+        language="en-US",
+        target_audience=None,
+        key_message=None,
+        call_to_action=None,
+    )
+    defaults.update(overrides)
+    return CampaignCreationRequest(**defaults)
+
+
+def _very_long_brief(**overrides):
+    long_business = ("Luna Coffee Roasters " * 10)[:120].strip()
+    long_product = ("Specialty Cold Brew Subscription Box " * 10)[:200].strip()
+    # Realistic long fields are multi-sentence prose, not one giant run-on --
+    # each repetition ends in a period so _first_complete_sentence has a
+    # real, early sentence boundary to find (proving it drops the rest
+    # rather than cutting mid-sentence/mid-word).
+    long_key_message = ("Smooth energy for your day. " * 10)[:500].strip()
+    long_cta = ("Discover the whole collection today. " * 10)[:200].strip()
+    defaults = dict(
+        business_name=long_business,
+        product_or_service=long_product,
+        business_description="A local roaster offering weekly cold brew delivery to nearby cafes and offices.",
+        campaign_goal="Increase online subscription sales for our new premium cold brew lineup.",
+        platforms=["instagram"],
+        tone="Bold, modern, and energetic",
+        language="en-US",
+        target_audience="Young professionals",
+        key_message=long_key_message,
+        call_to_action=long_cta,
+    )
+    defaults.update(overrides)
+    return CampaignCreationRequest(**defaults)
+
+
+async def _storyboard_narrations(brief) -> list[str]:
+    state: GraphState = {"version": _version(brief=brief)}
+    strategized = await nodes.create_strategy(state)
+    result = await nodes.create_storyboard(strategized)
+    return [scene.narration for scene in result["version"].storyboard.scenes]
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_lands_in_preferred_band_for_a_normal_brief():
+    narrations = await _storyboard_narrations(_short_message_brief())
+    total = sum(narration_timing.word_count(n) for n in narrations)
+    min_words, max_words = narration_timing.target_word_range()
+    assert min_words <= total <= max_words
+    estimated = narration_timing.estimate_seconds(total)
+    assert narration_timing.TARGET_MIN_SECONDS <= estimated <= narration_timing.TARGET_MAX_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_total_word_count_stays_within_designed_range():
+    # A second, distinct brief (not Luna-themed) proves the band isn't an
+    # artifact of one specific fixture's word lengths.
+    narrations = await _storyboard_narrations(_version().brief)
+    total = sum(narration_timing.word_count(n) for n in narrations)
+    min_words, max_words = narration_timing.target_word_range()
+    assert min_words <= total <= max_words
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_extends_short_briefs_toward_the_target_band():
+    narrations = await _storyboard_narrations(_very_short_brief())
+    total = sum(narration_timing.word_count(n) for n in narrations)
+    min_words, max_words = narration_timing.target_word_range()
+    assert min_words <= total <= max_words
+    # The extension content is genuine campaign content (business_description
+    # and/or tone), not a repeated fixed phrase.
+    assert len(set(narrations)) == 3
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_extension_never_narrates_target_audience():
+    # Same production-incident guard as the core templates: even when
+    # extending short narration, target_audience must never be spliced in.
+    brief = _very_short_brief(target_audience="Busy parents aged 30-45")
+    narrations = await _storyboard_narrations(brief)
+    for narration in narrations:
+        assert "Busy parents aged 30-45" not in narration
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_never_cuts_long_key_message_or_cta_mid_sentence():
+    # For long, multi-sentence fields, only the first complete sentence is
+    # used -- the rest is dropped whole, never cut mid-sentence/mid-word.
+    brief = _very_long_brief()
+    narrations = await _storyboard_narrations(brief)
+    expected_key_message = nodes._first_complete_sentence(brief.key_message)
+    expected_cta = nodes._first_complete_sentence(brief.call_to_action)
+    assert expected_key_message in narrations[1]
+    assert expected_cta in narrations[2]
+    # The dropped remainder must not appear anywhere (proves it was cleanly
+    # excluded, not truncated into a dangling fragment).
+    remainder = brief.key_message[len(expected_key_message) :].strip()
+    assert remainder and remainder not in narrations[1]
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_never_truncates_long_product_or_business_names():
+    brief = _very_long_brief()
+    narrations = await _storyboard_narrations(brief)
+    combined = " ".join(narrations)
+    assert brief.business_name in combined
+    assert brief.product_or_service in combined
+
+
+@pytest.mark.asyncio
+async def test_create_storyboard_narration_scenes_remain_non_empty_and_well_formed():
+    for brief in (_short_message_brief(), _very_short_brief(), _very_long_brief()):
+        narrations = await _storyboard_narrations(brief)
+        assert len(narrations) == 3
+        for narration in narrations:
+            stripped = narration.strip()
+            assert stripped == narration, "no leading/trailing whitespace"
+            assert stripped, "narration must not be empty"
+            assert stripped.endswith((".", "!", "?")), "narration should end as a sentence"
+            assert ".." not in stripped, "no doubled punctuation from truncation/extension"
+
+
+def test_best_fitting_candidate_never_returns_a_truncated_phrase():
+    candidates = ["It's Bold.", "A much longer candidate sentence that will not fit the budget."]
+    # Room for neither candidate: must add nothing, never cut the short one down further.
+    assert nodes._best_fitting_candidate(candidates, remaining_words=1, used=set()) is None
+    assert nodes._best_fitting_candidate(candidates, remaining_words=0, used=set()) is None
+    # Room for exactly the short candidate (2 words) but not the long one: picks it whole.
+    assert nodes._best_fitting_candidate(candidates, remaining_words=2, used=set()) == "It's Bold."
+    assert nodes._best_fitting_candidate(candidates, remaining_words=3, used=set()) == "It's Bold."
+    # Already used: not offered again, even though it would fit.
+    assert nodes._best_fitting_candidate(candidates, remaining_words=3, used={"It's Bold."}) is None
+
+
+def _n_word_sentence(word_count: int) -> str:
+    return " ".join(["word"] * (word_count - 1) + ["word."])
+
+
+@pytest.mark.asyncio
+async def test_apply_duration_budget_adds_nothing_when_only_one_to_three_words_of_room_remain():
+    # _best_fitting_candidate (tested directly above) already proves a tight
+    # remaining-room value never forces a truncated candidate in; this
+    # exercises the same edge case through the real _apply_duration_budget
+    # entry point. core_total is deliberately set 1-3 words below max_words
+    # -- note that's *above* min_words here, since with a 4-word-wide target
+    # band (32-36) a slot can only ever be evaluated with <=3 words of room
+    # left once the running total has already reached min_words, at which
+    # point the loop's own "total >= min_words" guard stops it from
+    # attempting (or needing) another extension at all.
+    brief = _very_short_brief()  # tone/description candidates are 4+ words: neither fits a 1-3 word gap
+    min_words, max_words = narration_timing.target_word_range()
+    for gap in (1, 2, 3):
+        core_total = max_words - gap
+        assert core_total >= min_words
+        core = [_n_word_sentence(10), _n_word_sentence(10), _n_word_sentence(core_total - 20)]
+        assert sum(narration_timing.word_count(n) for n in core) == core_total
+
+        result = nodes._apply_duration_budget(core, brief)
+
+        assert result == core, f"gap={gap}: already at/above the floor, nothing should be added or cut"
+
+
+_create_creative_plan = nodes.make_create_creative_plan_node(DeterministicCreativePlanProvider())
+
+
 async def _version_with_storyboard(**overrides) -> CampaignVersion:
     state: GraphState = {"version": _version(**overrides)}
     strategized = await nodes.create_strategy(state)
     copied = await nodes.generate_copy(strategized)
     result = await nodes.create_storyboard(copied)
     return result["version"]
+
+
+@pytest.mark.asyncio
+async def test_create_creative_plan_requires_prior_storyboard():
+    state: GraphState = {"version": _version()}
+    with pytest.raises(ValueError, match="create_storyboard"):
+        await _create_creative_plan(state)
+
+
+@pytest.mark.asyncio
+async def test_create_creative_plan_produces_six_shots_from_three_scenes():
+    version = await _version_with_storyboard()
+    result = await _create_creative_plan({"version": version})
+    plan = result["version"].creative_video_plan
+    assert plan is not None
+    assert len(plan.shots) == 6
+
+
+@pytest.mark.asyncio
+async def test_create_creative_plan_shot_numbers_are_sequential():
+    version = await _version_with_storyboard()
+    result = await _create_creative_plan({"version": version})
+    plan = result["version"].creative_video_plan
+    assert [shot.shot_number for shot in plan.shots] == [1, 2, 3, 4, 5, 6]
+
+
+@pytest.mark.asyncio
+async def test_create_creative_plan_total_duration_matches_campaign_target():
+    version = await _version_with_storyboard()
+    result = await _create_creative_plan({"version": version})
+    plan = result["version"].creative_video_plan
+    assert plan.total_duration_seconds == version.constraints.target_duration_seconds
+    assert abs(sum(shot.duration_seconds for shot in plan.shots) - plan.total_duration_seconds) <= 0.01
+
+
+@pytest.mark.asyncio
+async def test_create_creative_plan_covers_all_three_source_scenes():
+    version = await _version_with_storyboard()
+    result = await _create_creative_plan({"version": version})
+    plan = result["version"].creative_video_plan
+    source_scenes = {shot.source_scene_number for shot in plan.shots}
+    assert source_scenes == {1, 2, 3}
+
+
+@pytest.mark.asyncio
+async def test_create_creative_plan_uses_short_text_not_full_narration_paragraphs():
+    version = await _version_with_storyboard()
+    result = await _create_creative_plan({"version": version})
+    plan = result["version"].creative_video_plan
+    narrations = {scene.narration for scene in version.storyboard.scenes}
+    texts = [shot.text for shot in plan.shots if shot.text]
+    assert texts, "expected at least one shot to carry on-screen text"
+    for text in texts:
+        assert text not in narrations
+        assert len(text) <= 200
+
+
+@pytest.mark.asyncio
+async def test_create_creative_plan_is_deterministic_for_identical_inputs():
+    version = await _version_with_storyboard()
+    first = await _create_creative_plan({"version": version})
+    second = await _create_creative_plan({"version": version})
+    assert first["version"].creative_video_plan == second["version"].creative_video_plan
+
+
+@pytest.mark.asyncio
+async def test_create_creative_plan_persists_to_campaign_version():
+    version = await _version_with_storyboard()
+    assert version.creative_video_plan is None
+    result = await _create_creative_plan({"version": version})
+    assert result["version"].creative_video_plan is not None
+    assert result["version"] is not version
 
 
 class _FakeStepRepositoryForGenerateImages(WorkflowRepository):
@@ -548,6 +797,82 @@ async def test_generate_voiceover_is_provider_agnostic():
 
 
 @pytest.mark.asyncio
+async def test_generate_voiceover_skips_and_never_calls_the_provider_when_style_does_not_require_it():
+    version = await _version_with_storyboard(
+        brief=_version().brief.model_copy(update={"video_style": VideoStyle.CINEMATIC_TEXT_AD})
+    )
+    provider = _CountingMockVoiceProvider()
+    node = nodes.make_generate_voiceover_node(provider)
+
+    result = await node({"version": version})
+
+    assert provider.calls == 0
+    assert result["version"].voice_artifact is None
+    assert result["_step_skipped"] is True
+    assert result["_skip_reason"] == "video_style=CINEMATIC_TEXT_AD"
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_wrapped_with_step_tracking_records_skipped_for_cinematic_text_ad():
+    version = await _version_with_storyboard(
+        brief=_version().brief.model_copy(update={"video_style": VideoStyle.CINEMATIC_TEXT_AD})
+    )
+    repository = _FakeStepRepositoryForGenerateImages()
+    provider = _CountingMockVoiceProvider()
+    wrapped = with_step_tracking(WorkflowStep.VOICEOVER, repository)(nodes.make_generate_voiceover_node(provider))
+
+    result = await wrapped({"version": version})
+
+    assert provider.calls == 0
+    assert result["version"].voice_artifact is None
+    assert "_step_skipped" not in result
+    assert [record.status for record in repository.save_calls] == [StepStatus.RUNNING, StepStatus.SKIPPED]
+
+
+@pytest.mark.asyncio
+async def test_generate_voiceover_still_runs_normally_for_voiceover_ad():
+    # video_style defaults to VOICEOVER_AD -- regression guard that the new branch
+    # doesn't change behavior for the existing, unmodified style.
+    version = await _version_with_storyboard()
+    provider = _CountingMockVoiceProvider()
+    node = nodes.make_generate_voiceover_node(provider)
+
+    result = await node({"version": version})
+
+    assert provider.calls == 1
+    assert result["version"].voice_artifact is not None
+    assert "_step_skipped" not in result
+
+
+class _CountingVoiceAssetPipeline:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def acquire(self, version, is_cancelled):
+        self.calls += 1
+        raise AssertionError("pipeline.acquire() must not be called when voiceover is skipped")
+
+
+@pytest.mark.asyncio
+async def test_acquire_voiceover_skips_and_never_calls_the_pipeline_when_style_does_not_require_it():
+    version = await _version_with_storyboard(
+        brief=_version().brief.model_copy(update={"video_style": VideoStyle.CINEMATIC_TEXT_AD})
+    )
+    pipeline = _CountingVoiceAssetPipeline()
+
+    async def never_cancelled() -> bool:
+        return False
+
+    node = nodes.make_acquire_voiceover_node(pipeline, never_cancelled)
+    result = await node({"version": version})
+
+    assert pipeline.calls == 0
+    assert result["version"].voice_artifact is None
+    assert result["_step_skipped"] is True
+    assert result["_skip_reason"] == "video_style=CINEMATIC_TEXT_AD"
+
+
+@pytest.mark.asyncio
 async def test_generate_voiceover_wrapped_with_step_tracking_runs_on_first_execution():
     version = await _version_with_storyboard()
     repository = _FakeStepRepositoryForGenerateImages()
@@ -801,6 +1126,23 @@ async def test_validate_review_package_reports_only_missing_voice_artifact():
     validation = result["review_validation"]
     assert validation.is_valid is False
     assert validation.missing_artifacts == ["voice_artifact"]
+
+
+@pytest.mark.asyncio
+async def test_validate_review_package_does_not_require_voice_artifact_for_cinematic_text_ad():
+    state = await _state_with_full_review_package()
+    version = state["version"].model_copy(
+        update={
+            "voice_artifact": None,
+            "brief": state["version"].brief.model_copy(update={"video_style": VideoStyle.CINEMATIC_TEXT_AD}),
+        }
+    )
+
+    result = await nodes.validate_review_package({"version": version})
+
+    validation = result["review_validation"]
+    assert validation.is_valid is True
+    assert validation.missing_artifacts == []
 
 
 @pytest.mark.asyncio

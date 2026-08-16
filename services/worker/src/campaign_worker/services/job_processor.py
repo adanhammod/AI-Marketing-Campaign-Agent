@@ -28,10 +28,12 @@ from campaign_worker.graph.executor import _CompiledGraph, build_resume_graph, b
 from campaign_worker.graph.state import GraphState
 from campaign_worker.images.pipeline import ImageAssetPipeline
 from campaign_worker.package.pipeline import PackageAssetPipeline
-from campaign_worker.providers.base import ImageProvider, VideoProvider, VoiceProvider
+from campaign_worker.providers.base import CreativePlanProvider, ImageProvider, VideoProvider, VoiceProvider
 from campaign_worker.providers.mock_package_pipeline import MockPackagePipeline
 from campaign_worker.repositories.workflow_repository import LeaseContext, WorkflowRepository
 from campaign_worker.video.pipeline import VideoAssetPipeline
+
+from ..graph.creative_plan_provider import DeterministicCreativePlanProvider
 
 # Pipeline order used only to decide which steps a REGENERATE message seeds as REUSED
 # before build_start_graph runs: every step strictly before message.requested_step.
@@ -39,6 +41,7 @@ _PIPELINE_ORDER: tuple[WorkflowStep, ...] = (
     WorkflowStep.STRATEGY,
     WorkflowStep.COPY,
     WorkflowStep.STORYBOARD,
+    WorkflowStep.CREATIVE_PLAN,
     WorkflowStep.IMAGES,
     WorkflowStep.VOICEOVER,
     WorkflowStep.VIDEO,
@@ -86,6 +89,7 @@ class GraphJobProcessor(JobProcessor):
         video_provider: VideoProvider | VideoAssetPipeline,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
         package_pipeline: PackageAssetPipeline | None = None,
+        creative_plan_provider: CreativePlanProvider | None = None,
     ) -> None:
         self._repository = repository
         self._image_provider = image_provider
@@ -93,6 +97,7 @@ class GraphJobProcessor(JobProcessor):
         self._video_provider = video_provider
         self._is_cancelled = is_cancelled or _never_cancelled
         self._package_pipeline = package_pipeline or MockPackagePipeline()
+        self._creative_plan_provider = creative_plan_provider or DeterministicCreativePlanProvider()
 
     async def process(self, message: SQSJobMessage, version: CampaignVersion, lease: LeaseContext) -> ProcessingResult:
         if message.operation == SQSOperation.REGENERATE:
@@ -163,6 +168,7 @@ class GraphJobProcessor(JobProcessor):
                 self._image_provider,
                 self._voice_provider,
                 self._video_provider,
+                creative_plan_provider=self._creative_plan_provider,
             )
         return build_resume_graph(self._repository, self._is_cancelled, self._package_pipeline)
 

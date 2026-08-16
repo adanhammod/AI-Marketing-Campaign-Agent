@@ -188,6 +188,26 @@ async def test_reused_status_also_skips():
 
 
 @pytest.mark.asyncio
+async def test_previously_skipped_status_also_short_circuits():
+    campaign_id = uuid4()
+    repository = FakeStepRepository(
+        seed={(campaign_id, 1, WorkflowStep.VOICEOVER): _step_record(campaign_id, StepStatus.SKIPPED, WorkflowStep.VOICEOVER)}
+    )
+    calls: list[str] = []
+
+    async def node(state: GraphState) -> GraphState:
+        calls.append("ran")
+        return state
+
+    version = _version(campaign_id=campaign_id)
+    wrapped = with_step_tracking(WorkflowStep.VOICEOVER, repository)(node)
+    await wrapped({"version": version})
+
+    assert calls == []
+    assert repository.save_calls == []
+
+
+@pytest.mark.asyncio
 async def test_failed_step_is_retried_not_skipped():
     campaign_id = uuid4()
     repository = FakeStepRepository(
@@ -240,6 +260,50 @@ async def test_skipped_step_reuses_persisted_output_without_recomputing():
 
     assert result["version"].strategy == sentinel_strategy
     assert result["version"].strategy.audience == "PRE-PERSISTED-SENTINEL"
+
+
+@pytest.mark.asyncio
+async def test_skip_sentinel_records_skipped_status_and_emits_step_skipped_event():
+    repository = FakeStepRepository()
+
+    async def node(state: GraphState) -> GraphState:
+        return {"version": state["version"], "_step_skipped": True, "_skip_reason": "video_style=CINEMATIC_TEXT_AD"}
+
+    version = _version()
+    wrapped = with_step_tracking(WorkflowStep.VOICEOVER, repository)(node)
+    await wrapped({"version": version})
+
+    saved_statuses = [record.status for record in repository.save_calls]
+    assert saved_statuses == [StepStatus.RUNNING, StepStatus.SKIPPED]
+    emitted = [event for events in repository.event_calls for event in events]
+    assert [event.event_type for event in emitted] == [CampaignEventType.STEP_STARTED, CampaignEventType.STEP_SKIPPED]
+    assert emitted[1].details == {"reason": "video_style=CINEMATIC_TEXT_AD"}
+
+
+@pytest.mark.asyncio
+async def test_skip_sentinel_keys_are_stripped_from_returned_state():
+    repository = FakeStepRepository()
+
+    async def node(state: GraphState) -> GraphState:
+        return {"version": state["version"], "_step_skipped": True, "_skip_reason": "because"}
+
+    result = await with_step_tracking(WorkflowStep.VOICEOVER, repository)(node)({"version": _version()})
+
+    assert "_step_skipped" not in result
+    assert "_skip_reason" not in result
+
+
+@pytest.mark.asyncio
+async def test_skip_sentinel_without_reason_emits_empty_details():
+    repository = FakeStepRepository()
+
+    async def node(state: GraphState) -> GraphState:
+        return {"version": state["version"], "_step_skipped": True}
+
+    await with_step_tracking(WorkflowStep.VOICEOVER, repository)(node)({"version": _version()})
+
+    emitted = [event for events in repository.event_calls for event in events]
+    assert emitted[1].details == {}
 
 
 @pytest.mark.asyncio

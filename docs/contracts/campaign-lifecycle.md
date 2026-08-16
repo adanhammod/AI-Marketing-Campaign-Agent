@@ -132,6 +132,6 @@ Progress is an estimate, integer `0..100`, and never decreases within a version.
 }
 ```
 
-Event types: `CAMPAIGN_CREATED`, `JOB_QUEUED`, `STATUS_CHANGED`, `STEP_STARTED`, `STEP_COMPLETED`, `STEP_REUSED`, `RETRY_SCHEDULED`, `PROVIDER_CALL_STARTED`, `PROVIDER_CALL_COMPLETED`, `PROVIDER_FALLBACK_USED`, `REVIEW_READY`, `REVISION_REQUESTED`, `APPROVED`, `FINALIZED`, `CANCEL_REQUESTED`, `CANCELLED`, `FAILED`, and `LATE_PROVIDER_RESULT_DISCARDED`.
+Event types: `CAMPAIGN_CREATED`, `JOB_QUEUED`, `STATUS_CHANGED`, `STEP_STARTED`, `STEP_COMPLETED`, `STEP_REUSED`, `STEP_SKIPPED`, `RETRY_SCHEDULED`, `PROVIDER_CALL_STARTED`, `PROVIDER_CALL_COMPLETED`, `PROVIDER_FALLBACK_USED`, `REVIEW_READY`, `REVISION_REQUESTED`, `APPROVED`, `FINALIZED`, `CANCEL_REQUESTED`, `CANCELLED`, `FAILED`, and `LATE_PROVIDER_RESULT_DISCARDED`.
 
 Events are append-only. Ordering within a campaign is by a conditionally incremented `event_sequence`; timestamp is informational. Duplicate writers use `event_id` idempotency. Poll responses return ascending sequence and a `next_cursor`. React detects updates using `campaign_version`, `updated_at`, `event_sequence`, and terminal status.

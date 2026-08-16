@@ -33,6 +33,13 @@ def build_render_args(
         zoom_increment = (zoom_end - 1.0) / max(frames - 1, 1)
         zoom_expr = f"min(zoom+{zoom_increment:.6f},{zoom_end})"
         chain = f"[{index}:v]scale={width}:{height},zoompan=z='{zoom_expr}':d={frames}:s={width}x{height}:fps={fps}"
+        # zoompan's `d` does not itself bound this chain's output frame count
+        # when fed a `-loop 1 -t <duration>` input -- without an explicit
+        # trim, a scene's chain can run far past its intended length, and
+        # concat (which drains each input stream in order before advancing)
+        # never reaches the later scenes. setpts resets the trimmed segment
+        # back to a zero-based timeline, which concat expects of every input.
+        chain += f",trim=duration={duration:.3f},setpts=PTS-STARTPTS"
         if index == 0:
             chain += f",fade=t=in:st=0:d={fade_seconds}"
         if index == scene_count - 1:

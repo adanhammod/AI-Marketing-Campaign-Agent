@@ -257,8 +257,17 @@ class SQSConsumer:
         return [await self.process_raw(raw) for raw in await self.receive()]
 
     async def run(self) -> None:
+        backoff = self._settings.sqs_receive_retry_initial_backoff_seconds
         while not self._stopping.is_set():
-            for raw in await self.receive():
+            try:
+                raws = await self.receive()
+            except ProcessingUncertain:
+                _LOG.warning("receive_failed_retrying", extra={"backoff_seconds": backoff})
+                await self._interruptible_sleep(backoff)
+                backoff = min(backoff * 2, self._settings.sqs_receive_retry_max_backoff_seconds)
+                continue
+            backoff = self._settings.sqs_receive_retry_initial_backoff_seconds
+            for raw in raws:
                 if self._stopping.is_set():
                     return
                 self._active = asyncio.create_task(self.process_raw(raw))
@@ -266,6 +275,12 @@ class SQSConsumer:
                     await self._active
                 finally:
                     self._active = None
+
+    async def _interruptible_sleep(self, seconds: float) -> None:
+        try:
+            await asyncio.wait_for(self._stopping.wait(), timeout=seconds)
+        except TimeoutError:
+            pass
 
     async def shutdown(self) -> None:
         self._stopping.set()

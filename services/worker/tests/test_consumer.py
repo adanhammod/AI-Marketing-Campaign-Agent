@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -142,6 +143,7 @@ class StubSQS:
     def __init__(self, messages=None):
         self.messages = list(messages or [])
         self.receives = 0
+        self.receive_failures = 0
         self.deletes = []
         self.visibility = 0
         self.visibility_failures = 0
@@ -149,6 +151,9 @@ class StubSQS:
 
     def receive_message(self, **kwargs):
         self.receives += 1
+        if self.receive_failures > 0:
+            self.receive_failures -= 1
+            raise ClientError({"Error": {"Code": "Throttled", "Message": "private"}}, "ReceiveMessage")
         return {"Messages": self.messages}
 
     def delete_message(self, **kwargs):
@@ -630,3 +635,65 @@ async def test_shutdown_timeout_cancels_without_acknowledgement():
     await consumer.shutdown()
     await asyncio.gather(running, return_exceptions=True)
     assert queue.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_run_retries_after_transient_receive_failure():
+    value = job()
+    queue = StubSQS([raw(value)])
+    queue.receive_failures = 1
+    consumer = SQSConsumer(
+        queue,
+        FakeRepository(value),
+        NoOpJobProcessor(),
+        settings(sqs_receive_retry_initial_backoff_seconds=0.01, sqs_receive_retry_max_backoff_seconds=0.01),
+    )
+    running = asyncio.create_task(consumer.run())
+    for _ in range(200):
+        if queue.deletes:
+            break
+        await asyncio.sleep(0.005)
+    await consumer.shutdown()
+    await asyncio.gather(running, return_exceptions=True)
+    assert queue.deletes, "message should still be processed once the retried receive succeeds"
+    assert queue.receives >= 2, "the failing first receive and a later successful one should both be counted"
+
+
+@pytest.mark.asyncio
+async def test_run_retry_backoff_is_bounded_and_does_not_busy_spin():
+    value = job()
+    queue = StubSQS([raw(value)])
+    queue.receive_failures = 1000
+    consumer = SQSConsumer(
+        queue,
+        FakeRepository(value),
+        NoOpJobProcessor(),
+        settings(sqs_receive_retry_initial_backoff_seconds=0.05, sqs_receive_retry_max_backoff_seconds=0.05),
+    )
+    running = asyncio.create_task(consumer.run())
+    await asyncio.sleep(0.22)
+    await consumer.shutdown()
+    await asyncio.gather(running, return_exceptions=True)
+    # A 0.05s fixed backoff over ~0.22s allows roughly 4-5 attempts. Hundreds of attempts
+    # would mean the loop is busy-spinning instead of sleeping between retries.
+    assert 2 <= queue.receives <= 8
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_receive_backoff_is_responsive():
+    value = job()
+    queue = StubSQS()
+    queue.receive_failures = 1000
+    consumer = SQSConsumer(
+        queue,
+        FakeRepository(value),
+        NoOpJobProcessor(),
+        settings(sqs_receive_retry_initial_backoff_seconds=5, sqs_receive_retry_max_backoff_seconds=5),
+    )
+    running = asyncio.create_task(consumer.run())
+    await asyncio.sleep(0.02)  # let the first receive fail and enter the backoff sleep
+    started = time.monotonic()
+    await consumer.shutdown()
+    await asyncio.gather(running, return_exceptions=True)
+    assert time.monotonic() - started < 1.0, "shutdown should interrupt the backoff sleep, not wait it out"
+    assert running.exception() is None, "run() must not crash while retrying transient receive failures"
