@@ -1,0 +1,67 @@
+#!/bin/bash
+set -euxo pipefail
+exec > >(tee /var/log/kubeadm-control-plane.log | logger -t kubeadm-bootstrap -s 2>/dev/console) 2>&1
+
+swapoff -a
+sed -i '/ swap / s/^/#/' /etc/fstab
+cat >/etc/modules-load.d/k8s.conf <<'EOF'
+overlay
+br_netfilter
+EOF
+modprobe overlay
+modprobe br_netfilter
+cat >/etc/sysctl.d/k8s.conf <<'EOF'
+net.bridge.bridge-nf-call-iptables=1
+net.bridge.bridge-nf-call-ip6tables=1
+net.ipv4.ip_forward=1
+EOF
+sysctl --system
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y containerd apt-transport-https ca-certificates curl gpg awscli
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' >/etc/apt/sources.list.d/kubernetes.list
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y kubelet kubeadm kubectl
+apt-mark hold kubelet kubeadm kubectl
+containerd config default >/etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl enable --now containerd kubelet
+
+if [ ! -f /etc/kubernetes/admin.conf ]; then
+  PRIVATE_IP=$(hostname -I | awk '{print $1}')
+  kubeadm init --apiserver-advertise-address="$PRIVATE_IP" --pod-network-cidr=10.244.0.0/16
+fi
+export KUBECONFIG=/etc/kubernetes/admin.conf
+until kubectl get --raw=/readyz >/dev/null 2>&1; do sleep 5; done
+kubectl apply -f https://github.com/flannel-io/flannel/releases/download/v0.28.8/kube-flannel.yml
+cat >/usr/local/sbin/refresh-kubeadm-join-command <<'EOF'
+#!/bin/bash
+set -euo pipefail
+JOIN_COMMAND=$(kubeadm token create --ttl 12h --print-join-command)
+aws ssm put-parameter --name "${join_parameter_name}" --type SecureString --value "$JOIN_COMMAND" --overwrite --region "${aws_region}"
+EOF
+chmod 0700 /usr/local/sbin/refresh-kubeadm-join-command
+cat >/etc/systemd/system/kubeadm-join-command.service <<'EOF'
+[Unit]
+Description=Refresh kubeadm worker join command in SSM
+After=network-online.target kubelet.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/refresh-kubeadm-join-command
+EOF
+cat >/etc/systemd/system/kubeadm-join-command.timer <<'EOF'
+[Unit]
+Description=Refresh kubeadm worker join command every six hours
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=6h
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now kubeadm-join-command.timer
+/usr/local/sbin/refresh-kubeadm-join-command
+install -d -o ubuntu -g ubuntu /home/ubuntu/.kube
+install -o ubuntu -g ubuntu -m 0600 /etc/kubernetes/admin.conf /home/ubuntu/.kube/config

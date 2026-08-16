@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata: {name: campaign-agent-dev, namespace: argocd}
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/adanhammod/AI-Marketing-Campaign-Agent.git
+    targetRevision: dev
+    path: infra/k8s/dev
+  destination: {server: https://kubernetes.default.svc, namespace: dev}
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=false]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata: {name: campaign-agent-prod, namespace: argocd}
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/adanhammod/AI-Marketing-Campaign-Agent.git
+    targetRevision: main
+    path: infra/k8s/prod
+  destination: {server: https://kubernetes.default.svc, namespace: prod}
+  syncPolicy:
+    syncOptions: [CreateNamespace=false]
