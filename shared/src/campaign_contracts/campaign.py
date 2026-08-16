@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 from pydantic import Field, HttpUrl, model_validator
@@ -21,17 +22,20 @@ class Storyboard(UTCModel):
         if [s.scene_number for s in self.scenes]!=[1,2,3] or sum(s.duration_seconds for s in self.scenes)!=self.total_duration_seconds: raise ValueError("invalid scene ordering or duration")
         return self
 class VideoShot(UTCModel):
-    shot_number:int=Field(ge=1); role:ShotRole; source_scene_number:int=Field(ge=1,le=3); asset_role:AssetRole; visual_description:str=Field(min_length=1,max_length=500); duration_seconds:float=Field(gt=0); text:str|None=Field(default=None,max_length=200); camera_motion:CameraMotion; transition_in:TransitionType; audio_cues:list[AudioCueType]=Field(default_factory=list)
+    # Decimal, not float: this is a DynamoDB-persisted field (see dynamodb.py::_ddb,
+    # which deliberately rejects raw floats to avoid binary-float precision loss on
+    # a persisted value) and the only non-whole-second duration in this codebase.
+    shot_number:int=Field(ge=1); role:ShotRole; source_scene_number:int=Field(ge=1,le=3); asset_role:AssetRole; visual_description:str=Field(min_length=1,max_length=500); duration_seconds:Decimal=Field(gt=0); text:str|None=Field(default=None,max_length=200); camera_motion:CameraMotion; transition_in:TransitionType; audio_cues:list[AudioCueType]=Field(default_factory=list)
 class CreativeVideoPlan(UTCModel):
     concept:str=Field(min_length=1,max_length=200); visual_style:str=Field(min_length=1,max_length=300); total_duration_seconds:int=Field(ge=1); shots:list[VideoShot]=Field(min_length=1)
     @model_validator(mode="after")
     def sequence_and_duration(self):
         numbers=[s.shot_number for s in self.shots]
         if numbers!=list(range(1,len(self.shots)+1)): raise ValueError("shot_number must be sequential starting at 1")
-        # Float tolerance, not exact equality -- shot durations are floats (e.g. 1.2s) and
-        # their sum is not guaranteed bit-exact against the int total_duration_seconds
-        # purely from binary float representation.
-        if abs(sum(s.duration_seconds for s in self.shots)-self.total_duration_seconds)>0.01: raise ValueError("shot durations must sum to total_duration_seconds")
+        # Tolerance, not exact equality -- shot durations are sub-second Decimals
+        # (e.g. 1.2s, or AI-generated values) and their sum is not guaranteed to
+        # land exactly on the int total_duration_seconds.
+        if abs(sum(s.duration_seconds for s in self.shots)-self.total_duration_seconds)>Decimal("0.01"): raise ValueError("shot durations must sum to total_duration_seconds")
         return self
 class ImagePrompt(UTCModel): scene_number:int=Field(ge=1,le=3); prompt:str=Field(min_length=1,max_length=4000); aspect_ratio:str="9:16"; reference_artifact_id:UUID|None=None
 class ReviewPackage(UTCModel): artifact_id:UUID; manifest_checksum:str=Field(pattern=r"^[0-9a-f]{64}$"); artifact_ids:list[UUID]=Field(min_length=1)

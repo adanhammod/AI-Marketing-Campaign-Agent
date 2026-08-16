@@ -66,7 +66,10 @@ def build_resolved_shots(plan: CreativeVideoPlan) -> list[ResolvedVideoShot]:
         ResolvedVideoShot(
             shot_number=shot.shot_number,
             scene_number=shot.source_scene_number,
-            duration_seconds=shot.duration_seconds,
+            # VideoShot.duration_seconds is Decimal (DynamoDB-persisted field);
+            # every renderer-facing type downstream of this adapter is float,
+            # so this is the one place that crosses the boundary explicitly.
+            duration_seconds=float(shot.duration_seconds),
             text=shot.text,
             camera_motion_key=resolve_camera_motion(shot.camera_motion),
             transition_key=resolve_transition(shot.transition_in),

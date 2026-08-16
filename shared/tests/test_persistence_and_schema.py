@@ -6,9 +6,9 @@ from uuid import UUID,uuid4
 import pytest
 from pydantic import HttpUrl
 from campaign_contracts.artifacts import ArtifactAttribution,ImageArtifactReference
-from campaign_contracts.campaign import CampaignAggregateMetadata,CampaignVersion
+from campaign_contracts.campaign import CampaignAggregateMetadata,CampaignVersion,CreativeVideoPlan,VideoShot
 from campaign_contracts.dynamodb import approval_sk,event_sk,meta_sk,pk,serialize_event,serialize_meta,serialize_step,serialize_version,step_sk,version_sk,_ddb
-from campaign_contracts.enums import CampaignStatus,StepStatus,WorkflowStep
+from campaign_contracts.enums import AssetRole,CameraMotion,CampaignStatus,ShotRole,StepStatus,TransitionType,WorkflowStep
 from campaign_contracts.events import CampaignEvent
 from campaign_contracts.schema_generation import SCHEMAS,generate
 from campaign_contracts.steps import WorkflowStepRecord
@@ -28,6 +28,21 @@ def test_ddb_converts_http_url_to_string():
     converted=_ddb(HttpUrl('https://www.pexels.com/@creator'))
     assert converted=='https://www.pexels.com/@creator'
     assert isinstance(converted,str)
+def _video_shot(duration_seconds):
+    return VideoShot(shot_number=1,role=ShotRole.HOOK,source_scene_number=1,asset_role=AssetRole.HERO_PRODUCT,visual_description='hero crop',duration_seconds=duration_seconds,camera_motion=CameraMotion.STATIC,transition_in=TransitionType.CUT)
+def test_serialize_version_with_creative_video_plan_produces_no_raw_floats():
+    # Regression test for a real E2E failure: CREATIVE_PLAN succeeds, then the
+    # very next save_version() crashes with "floats are forbidden in DynamoDB
+    # contracts" because VideoShot.duration_seconds was a float. Every other
+    # duration field in this codebase is int; this is the one place a real
+    # (non-whole-second) shot duration needs to round-trip through DynamoDB.
+    version=CampaignVersion.model_validate(load('queued-campaign.json'))
+    plan=CreativeVideoPlan(concept='c',visual_style='modern',total_duration_seconds=15,shots=[_video_shot(15)])
+    updated=version.model_copy(update={'creative_video_plan':plan})
+    item=serialize_version(updated)
+    shot_duration=item['creative_video_plan']['shots'][0]['duration_seconds']
+    assert isinstance(shot_duration,Decimal)
+    assert shot_duration==Decimal(15)
 def test_serialize_version_converts_nested_http_url_fields():
     version=CampaignVersion.model_validate(load('queued-campaign.json'))
     attribution=ArtifactAttribution(provider_asset_id='123',creator_name='Creator',creator_profile_url='https://www.pexels.com/@creator',source_page_url='https://www.pexels.com/photo/example-123/',provider_url='https://www.pexels.com',attribution_text='Photo by Creator on Pexels')
