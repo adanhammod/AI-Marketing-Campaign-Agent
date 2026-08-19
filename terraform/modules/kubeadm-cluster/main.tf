@@ -7,9 +7,6 @@ variable "vpc_id" {
 variable "subnet_ids" {
   type = list(string)
 }
-variable "k8s_api_allowed_cidr" {
-  type = string
-}
 variable "dev_alb_allowed_cidr" {
   type = string
 }
@@ -41,16 +38,11 @@ resource "aws_security_group" "nodes" {
   name   = "${var.name}-nodes"
   vpc_id = var.vpc_id
   ingress {
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = [var.k8s_api_allowed_cidr]
-  }
-  ingress {
-    from_port = 0
-    to_port   = 0
-    protocol  = "-1"
-    self      = true
+    description = "Kubernetes API and all inter-node traffic, cluster-internal only"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    self        = true
   }
   egress {
     from_port   = 0
