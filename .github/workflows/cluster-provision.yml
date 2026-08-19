@@ -1,4 +1,5 @@
 name: Cluster Terraform
+
 on:
   workflow_dispatch:
     inputs:
@@ -6,16 +7,37 @@ on:
         description: Apply after reviewing the plan
         type: boolean
         default: false
-permissions: {id-token: write, contents: read}
+
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   terraform:
     runs-on: ubuntu-latest
+
+    env:
+      TF_VAR_dev_alb_allowed_cidr: ${{ vars.DEV_ALB_ALLOWED_CIDR }}
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
-        with: {role-to-assume: "${{ secrets.AWS_TERRAFORM_ROLE_ARN }}", aws-region: us-east-1}
-      - uses: hashicorp/setup-terraform@v3
-      - run: terraform -chdir=terraform/environments/cluster init
-      - run: terraform -chdir=terraform/environments/cluster plan -out=tfplan
-      - if: inputs.apply
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/environments/cluster init
+
+      - name: Terraform plan
+        run: terraform -chdir=terraform/environments/cluster plan -out=tfplan
+
+      - name: Terraform apply
+        if: inputs.apply
         run: terraform -chdir=terraform/environments/cluster apply tfplan
