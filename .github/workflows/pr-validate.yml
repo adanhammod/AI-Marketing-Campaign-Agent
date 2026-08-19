@@ -1,0 +1,27 @@
+name: PR validation
+on:
+  pull_request:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive terraform
+      - run: |
+          for root in terraform/environments/cluster terraform/environments/prod terraform/environments/terraform-state-bootstrap; do
+            terraform -chdir="$root" init -backend=false
+            terraform -chdir="$root" validate
+          done
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -f services/frontend/Dockerfile -t campaign-agent-frontend:pr .
+      - run: docker build -f services/api/Dockerfile -t campaign-agent-api:pr .
+      - name: Worker music asset contract (no private S3 access in PR)
+        run: |
+          test -s services/worker/assets/music/README.md
+          if git ls-files 'services/worker/assets/music/*.mp3' | grep -q .; then
+            echo "cinematic.mp3 must not be committed to git (see README.md)" >&2
+            exit 1
+          fi
+          grep -Fq 'COPY services/worker/assets/music/cinematic.mp3 /app/assets/music/cinematic.mp3' services/worker/Dockerfile
+          grep -Fq 'ENV CINEMATIC_MUSIC_PATH=/app/assets/music/cinematic.mp3' services/worker/Dockerfile

@@ -22,6 +22,7 @@ htmlcov/
 # Build artifacts
 dist/
 build/
+.terraform/
 
 # Environment files (keep .env.example tracked)
 .env
@@ -43,3 +44,15 @@ services/.agents/
 .codex-write-check.tmp
 
 dynamodb get-item*
+
+# Licensed deployment inputs are staged locally/through CI, never committed.
+services/worker/assets/music/*.mp3
+!services/worker/assets/music/README.md
+
+# Terraform saved plan files
+*.tfplan
+
+# Terraform local state
+*.tfstate
+*.tfstate.*
+.terraform/

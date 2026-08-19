@@ -1,0 +1,20 @@
+# Copy this file to dev.tfvars (gitignored) and fill in real values.
+# Never commit dev.tfvars, your AWS account ID, or your IAM principal ARN.
+
+aws_region  = "us-east-1"
+environment = "dev"
+
+queue_name = "campaign-agent-dev-jobs"
+table_name = "campaign-agent-dev"
+
+# S3 bucket names are globally unique across all of AWS — include your
+# account ID or another unique suffix.
+bucket_name = "campaign-agent-dev-artifacts-<ACCOUNT_ID>"
+
+# A Bedrock foundation model available in aws_region, e.g. a Claude Haiku
+# model. Must have model access enabled in the Bedrock console for this
+# account/region (a one-time manual step Terraform does not manage).
+bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+
+# Your own IAM identity, from: aws sts get-caller-identity --query Arn --output text
+developer_principal_arn = "arn:aws:iam::<ACCOUNT_ID>:user/<YOUR_IAM_USER>"
