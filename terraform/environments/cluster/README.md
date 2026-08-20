@@ -42,10 +42,38 @@ add a root output if a stable reference is wanted later).
 
 When music is enabled, set CINEMATIC_MUSIC_ARTIFACT_URI to the matching s3://
 URI. No music S3 permission is created when the object ARN is null or empty.
-Set ECR_REGISTRY from the registry host portion of the
-ecr_repository_urls Terraform output. The configured account is 228281126655
-and region is us-east-1; Kubernetes manifests contain the resulting complete
-repository URLs, not an account placeholder.
+The configured account is 228281126655 and region is us-east-1.
+
+**Registry: ECR is dormant, Docker Hub is active.** `cd-dev.yml`/`cd-prod.yml`
+now build and push to Docker Hub (`DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`
+secrets), not ECR — `ECR_REGISTRY` is no longer read by any workflow. The
+three ECR repositories this root creates (`module.ecr`) are intentionally
+**kept, not removed**: they already exist and are imported into the durable
+S3 state (`campaign-terraform-state-228281126655`, key
+`cluster/terraform.tfstate`), and removing their Terraform configuration now
+would plan their destruction. They're retained as legacy/dormant
+infrastructure pending the cleanup below.
+
+**Docker Hub migration — future IAM cleanup (do not do yet):** once Docker
+Hub image pulls are verified working end-to-end in both dev and prod, these
+ECR-only IAM grants become unnecessary and can be removed, in this order —
+not before:
+
+1. Confirm Kubernetes successfully pulls `<DOCKERHUB_USERNAME>/campaign-agent-*`
+   images in both dev and prod (no `ImagePullBackOff`, full E2E verified).
+2. Remove the ECR push policy from `campaign-github-actions`
+   (`module.github_oidc.aws_iam_role_policy.ecr` in
+   `terraform/modules/github-oidc/main.tf`) — CI no longer pushes to ECR.
+3. Remove the `AmazonEC2ContainerRegistryReadOnly` attachment from
+   `campaign-cluster-worker` (`aws_iam_role_policy_attachment.worker_ecr` in
+   `terraform/modules/kubeadm-cluster/main.tf`) — worker nodes no longer pull
+   from ECR.
+4. Only after that, optionally decommission the ECR repositories/`module.ecr`
+   itself, if they're confirmed to have no remaining purpose (e.g. no
+   rollback dependency on previously-pushed ECR images).
+
+Each step should be its own reviewed change, applied only after the step
+before it is confirmed safe — not bundled together.
 
 AWS_TERRAFORM_ROLE_ARN is intentionally an externally bootstrapped role because
 the cluster workflow cannot assume a role that the same not-yet-run cluster

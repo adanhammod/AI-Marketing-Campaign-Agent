@@ -18,31 +18,39 @@ jobs:
         with:
           role-to-assume: "${{ secrets.AWS_GITHUB_ROLE_ARN }}"
           aws-region: us-east-1
-      - uses: aws-actions/amazon-ecr-login@v2
       - name: Restore approved music
         run: |
           test -n "${{ secrets.CINEMATIC_MUSIC_ARTIFACT_URI }}"
           aws s3 cp "${{ secrets.CINEMATIC_MUSIC_ARTIFACT_URI }}" services/worker/assets/music/cinematic.mp3
           test -s services/worker/assets/music/cinematic.mp3
+      - name: Verify Docker Hub credentials are configured
+        run: |
+          test -n "${{ secrets.DOCKERHUB_USERNAME }}"
+          test -n "${{ secrets.DOCKERHUB_TOKEN }}"
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: "${{ secrets.DOCKERHUB_USERNAME }}"
+          password: "${{ secrets.DOCKERHUB_TOKEN }}"
       - name: Build and push immutable images
         env:
-          REGISTRY: "${{ secrets.ECR_REGISTRY }}"
+          DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}"
           IMAGE_TAG: "${{ github.sha }}"
         run: |
           for service in frontend api worker; do
-            image="$REGISTRY/campaign-agent-$service:$IMAGE_TAG"
+            image="$DOCKERHUB_USERNAME/campaign-agent-$service:$IMAGE_TAG"
             docker build -f "services/$service/Dockerfile" -t "$image" .
             docker push "$image"
           done
       - name: Open manifest promotion PR
         env:
           GH_TOKEN: "${{ github.token }}"
-          REGISTRY: "${{ secrets.ECR_REGISTRY }}"
+          DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}"
           IMAGE_TAG: "${{ github.sha }}"
         run: |
-          sed -i -E "s#image: .*/campaign-agent-frontend:.*#image: $REGISTRY/campaign-agent-frontend:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
-          sed -i -E "s#image: .*/campaign-agent-api:.*#image: $REGISTRY/campaign-agent-api:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
-          sed -i -E "s#image: .*/campaign-agent-worker:.*#image: $REGISTRY/campaign-agent-worker:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
+          sed -i -E "s#image: .*/campaign-agent-frontend:.*#image: $DOCKERHUB_USERNAME/campaign-agent-frontend:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
+          sed -i -E "s#image: .*/campaign-agent-api:.*#image: $DOCKERHUB_USERNAME/campaign-agent-api:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
+          sed -i -E "s#image: .*/campaign-agent-worker:.*#image: $DOCKERHUB_USERNAME/campaign-agent-worker:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
           if git diff --quiet -- infra/k8s/prod/apps.yaml; then exit 0; fi
           branch="automation/prod-images-$IMAGE_TAG"
           git config user.name github-actions[bot]
@@ -51,4 +59,4 @@ jobs:
           git add infra/k8s/prod/apps.yaml
           git commit -m "chore(deploy): promote prod images $IMAGE_TAG"
           git push origin "$branch"
-          gh pr create --base main --head "$branch" --title "Promote prod images $IMAGE_TAG" --body "Immutable ECR image promotion for $IMAGE_TAG."
+          gh pr create --base main --head "$branch" --title "Promote prod images $IMAGE_TAG" --body "Immutable Docker Hub image promotion for $IMAGE_TAG."
