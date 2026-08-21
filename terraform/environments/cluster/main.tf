@@ -42,6 +42,9 @@ module "github_oidc" {
 output "alb_dns_name" {
   value = module.cluster.alb_dns_name
 }
+output "control_plane_id" {
+  value = module.cluster.control_plane_id
+}
 output "ecr_repository_urls" {
   value = module.ecr.repository_urls
 }
