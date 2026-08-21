@@ -18,6 +18,7 @@ ENV PRODUCER_HEADLESS_SHELL_PATH=/opt/chrome/chrome-headless-shell-linux64/chrom
 ENV CINEMATIC_MUSIC_PATH=/app/assets/music/cinematic.mp3
 ENV TMPDIR=/app/tmp
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+ && mkdir -p "$TMPDIR" \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
  && update-ca-certificates \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg libasound2 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libgtk-3-0 libnss3 libpangocairo-1.0-0 libxcomposite1 libxdamage1 libxrandr2 libxshmfence1 fonts-dejavu-core fonts-freefont-ttf fonts-liberation fonts-noto-cjk fonts-noto-color-emoji fonts-noto-core fonts-noto-extra fonts-noto-ui-core fontconfig \
