@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: <DOCKERHUB_USERNAME>/campaign-agent-api:main
+          image: adanhammod/campaign-agent-api:50dbda3c33bcdb6f77d88cbeb6404fcfb5e01fe5
           imagePullPolicy: Always
           ports: [{containerPort: 8000}]
           envFrom: [{configMapRef: {name: campaign-config}}, {secretRef: {name: campaign-secrets}}]
@@ -53,7 +53,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: worker
-          image: <DOCKERHUB_USERNAME>/campaign-agent-worker:main
+          image: adanhammod/campaign-agent-worker:50dbda3c33bcdb6f77d88cbeb6404fcfb5e01fe5
           imagePullPolicy: Always
           ports: [{containerPort: 8080}]
           envFrom: [{configMapRef: {name: campaign-config}}, {secretRef: {name: campaign-secrets}}]
@@ -78,7 +78,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: <DOCKERHUB_USERNAME>/campaign-agent-frontend:main
+          image: adanhammod/campaign-agent-frontend:50dbda3c33bcdb6f77d88cbeb6404fcfb5e01fe5
           imagePullPolicy: Always
           ports: [{containerPort: 8080}]
           resources:
