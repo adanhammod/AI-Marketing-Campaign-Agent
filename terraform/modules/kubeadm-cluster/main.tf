@@ -21,6 +21,18 @@ variable "worker_instance_type" {
 variable "aws_region" {
   type = string
 }
+variable "control_plane_key_name" {
+  description = "Existing AWS EC2 key pair name for control-plane SSH access. Setting/changing this forces replacement of the control-plane instance (key_name is immutable at the AWS API level)."
+  type        = string
+  default     = null
+  nullable    = true
+}
+variable "control_plane_ssh_allowed_cidr" {
+  description = "CIDR allowed to SSH (TCP/22) to the control plane only. Never 0.0.0.0/0. Workers never get an SSH rule."
+  type        = string
+  default     = null
+  nullable    = true
+}
 
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -49,6 +61,19 @@ resource "aws_security_group" "nodes" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+resource "aws_security_group" "control_plane_ssh" {
+  count       = var.control_plane_ssh_allowed_cidr == null ? 0 : 1
+  name        = "${var.name}-control-plane-ssh"
+  description = "SSH access to the control plane only, from an explicit admin CIDR. Never attached to worker instances."
+  vpc_id      = var.vpc_id
+  ingress {
+    description = "SSH from the configured admin CIDR"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.control_plane_ssh_allowed_cidr]
   }
 }
 resource "aws_security_group" "alb" {
@@ -137,10 +162,14 @@ locals {
   worker_user_data        = templatefile("${path.module}/templates/worker-user-data.sh.tftpl", local.template_vars)
 }
 resource "aws_instance" "control" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.control_plane_instance_type
-  subnet_id                   = var.subnet_ids[0]
-  vpc_security_group_ids      = [aws_security_group.nodes.id]
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = var.control_plane_instance_type
+  key_name      = var.control_plane_key_name
+  subnet_id     = var.subnet_ids[0]
+  vpc_security_group_ids = concat(
+    [aws_security_group.nodes.id],
+    var.control_plane_ssh_allowed_cidr == null ? [] : [aws_security_group.control_plane_ssh[0].id]
+  )
   iam_instance_profile        = aws_iam_instance_profile.control_plane.name
   user_data                   = local.control_plane_user_data
   user_data_replace_on_change = true

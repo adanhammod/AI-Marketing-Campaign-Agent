@@ -22,12 +22,14 @@ module "ecr" {
   repository_names = ["campaign-agent-frontend", "campaign-agent-api", "campaign-agent-worker"]
 }
 module "cluster" {
-  source               = "../../modules/kubeadm-cluster"
-  name                 = "campaign-cluster"
-  vpc_id               = module.network.vpc_id
-  subnet_ids           = module.network.public_subnet_ids
-  dev_alb_allowed_cidr = var.dev_alb_allowed_cidr
-  aws_region           = var.aws_region
+  source                         = "../../modules/kubeadm-cluster"
+  name                           = "campaign-cluster"
+  vpc_id                         = module.network.vpc_id
+  subnet_ids                     = module.network.public_subnet_ids
+  dev_alb_allowed_cidr           = var.dev_alb_allowed_cidr
+  aws_region                     = var.aws_region
+  control_plane_key_name         = "adan-key"
+  control_plane_ssh_allowed_cidr = "147.235.217.230/32"
 }
 module "github_oidc" {
   source                 = "../../modules/github-oidc"
