@@ -27,9 +27,9 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
 COPY --from=uv /uv /uvx /bin/
 COPY --from=hyperframes /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=hyperframes /usr/local/bin/node /usr/local/bin/node
-COPY --from=hyperframes /usr/local/bin/npm /usr/local/bin/npm
-COPY --from=hyperframes /usr/local/bin/npx /usr/local/bin/npx
-COPY --from=hyperframes /usr/local/bin/hyperframes /usr/local/bin/hyperframes
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && ln -s /usr/local/lib/node_modules/hyperframes/bin/hyperframes.mjs /usr/local/bin/hyperframes
 COPY --from=hyperframes /opt/chrome /opt/chrome
 WORKDIR /app
 COPY shared/pyproject.toml /app/shared/pyproject.toml
