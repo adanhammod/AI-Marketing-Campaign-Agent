@@ -52,11 +52,35 @@ jobs:
           sed -i -E "s#image: .*/campaign-agent-api:.*#image: $DOCKERHUB_USERNAME/campaign-agent-api:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
           sed -i -E "s#image: .*/campaign-agent-worker:.*#image: $DOCKERHUB_USERNAME/campaign-agent-worker:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
           if git diff --quiet -- infra/k8s/prod/apps.yaml; then exit 0; fi
-          branch="automation/prod-images-$IMAGE_TAG"
+          git checkout -- infra/k8s/prod/apps.yaml
+
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git switch -c "$branch"
-          git add infra/k8s/prod/apps.yaml
-          git commit -m "chore(deploy): promote prod images $IMAGE_TAG"
-          git push origin "$branch"
-          gh pr create --base main --head "$branch" --title "Promote prod images $IMAGE_TAG" --body "Immutable Docker Hub image promotion for $IMAGE_TAG."
+
+          base="main"
+          branch="automation/prod-images-$IMAGE_TAG"
+
+          git fetch origin "$base"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch"
+            git switch -C "$branch" "origin/$branch"
+          else
+            git switch -c "$branch" "origin/$base"
+          fi
+
+          sed -i -E "s#image: .*/campaign-agent-frontend:.*#image: $DOCKERHUB_USERNAME/campaign-agent-frontend:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
+          sed -i -E "s#image: .*/campaign-agent-api:.*#image: $DOCKERHUB_USERNAME/campaign-agent-api:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
+          sed -i -E "s#image: .*/campaign-agent-worker:.*#image: $DOCKERHUB_USERNAME/campaign-agent-worker:$IMAGE_TAG#" infra/k8s/prod/apps.yaml
+
+          if ! git diff --quiet -- infra/k8s/prod/apps.yaml; then
+            git add infra/k8s/prod/apps.yaml
+            git commit -m "chore(deploy): promote prod images $IMAGE_TAG"
+            git push origin "$branch"
+          fi
+
+          existing_pr=$(gh pr list --base "$base" --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing_pr" ]; then
+            echo "Reusing existing PR #$existing_pr for $branch"
+          else
+            gh pr create --base "$base" --head "$branch" --title "Promote prod images $IMAGE_TAG" --body "Immutable Docker Hub image promotion for $IMAGE_TAG."
+          fi
