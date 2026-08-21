@@ -32,6 +32,8 @@ module "cluster" {
 module "github_oidc" {
   source                 = "../../modules/github-oidc"
   repository             = "adanhammod/AI-Marketing-Campaign-Agent"
+  owner_id               = "157805409"
+  repository_id          = "1323726036"
   ecr_repository_arns    = module.ecr.repository_arns
   music_asset_object_arn = var.music_asset_object_arn
 }

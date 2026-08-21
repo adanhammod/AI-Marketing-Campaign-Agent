@@ -18,6 +18,7 @@ jobs:
 
     env:
       TF_VAR_dev_alb_allowed_cidr: ${{ vars.DEV_ALB_ALLOWED_CIDR }}
+      TF_VAR_music_asset_object_arn: ${{ vars.MUSIC_ASSET_OBJECT_ARN }}
 
     steps:
       - name: Checkout repository

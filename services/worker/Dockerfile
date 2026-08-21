@@ -17,13 +17,19 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PRODUCER_HEADLESS_SHELL_PATH=/opt/chrome/chrome-headless-shell-linux64/chrome-headless-shell
 ENV CINEMATIC_MUSIC_PATH=/app/assets/music/cinematic.mp3
 ENV TMPDIR=/app/tmp
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg libasound2 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libgtk-3-0 libnss3 libpangocairo-1.0-0 libxcomposite1 libxdamage1 libxrandr2 libxshmfence1 fonts-dejavu-core fonts-freefont-ttf fonts-liberation fonts-noto-cjk fonts-noto-color-emoji fonts-noto-core fonts-noto-extra fonts-noto-ui-core fontconfig && rm -rf /var/lib/apt/lists/* && fc-cache -f
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+ && mkdir -p "$TMPDIR" \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+ && update-ca-certificates \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg libasound2 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libgtk-3-0 libnss3 libpangocairo-1.0-0 libxcomposite1 libxdamage1 libxrandr2 libxshmfence1 fonts-dejavu-core fonts-freefont-ttf fonts-liberation fonts-noto-cjk fonts-noto-color-emoji fonts-noto-core fonts-noto-extra fonts-noto-ui-core fontconfig \
+ && rm -rf /var/lib/apt/lists/* \
+ && fc-cache -f
 COPY --from=uv /uv /uvx /bin/
 COPY --from=hyperframes /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=hyperframes /usr/local/bin/node /usr/local/bin/node
-COPY --from=hyperframes /usr/local/bin/npm /usr/local/bin/npm
-COPY --from=hyperframes /usr/local/bin/npx /usr/local/bin/npx
-COPY --from=hyperframes /usr/local/bin/hyperframes /usr/local/bin/hyperframes
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && ln -s /usr/local/lib/node_modules/hyperframes/bin/hyperframes.mjs /usr/local/bin/hyperframes
 COPY --from=hyperframes /opt/chrome /opt/chrome
 WORKDIR /app
 COPY shared/pyproject.toml /app/shared/pyproject.toml
