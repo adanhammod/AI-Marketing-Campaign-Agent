@@ -105,6 +105,15 @@ jobs:
           APPS_B64=$(base64 -w0 infra/k8s/argocd/applications.yaml)
 
           {
+            # AWS-RunShellScript executes the assembled commands via /bin/sh,
+            # which does not support `pipefail`. Wrap the whole script in a
+            # heredoc fed to `bash` so it runs under bash regardless of the
+            # outer interpreter. The heredoc delimiter is quoted, so /bin/sh
+            # passes this block through to bash's stdin completely verbatim
+            # (no premature expansion of $NS_B64/$APPS_B64 or anything else
+            # inside it) -- bash itself performs the variable assignment and
+            # set -euo pipefail once it reads its stdin.
+            echo "bash <<'ARGOCD_BOOTSTRAP_EOF'"
             printf 'NS_B64=%q\n' "$NS_B64"
             printf 'APPS_B64=%q\n' "$APPS_B64"
             cat <<'REMOTE_SCRIPT'
@@ -157,6 +166,7 @@ jobs:
           echo "=== verification: argocd applications ==="
           kubectl get applications -n argocd
           REMOTE_SCRIPT
+            echo "ARGOCD_BOOTSTRAP_EOF"
           } > /tmp/remote-bootstrap.sh
 
           PARAMS_JSON=$(jq -n --rawfile script /tmp/remote-bootstrap.sh '{commands: [$script]}')
