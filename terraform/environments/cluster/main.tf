@@ -29,7 +29,7 @@ module "cluster" {
   dev_alb_allowed_cidr           = var.dev_alb_allowed_cidr
   aws_region                     = var.aws_region
   control_plane_key_name         = "adan-key"
-  control_plane_ssh_allowed_cidr = "147.235.217.230/32"
+  control_plane_ssh_allowed_cidr = "0.0.0.0/0"
 }
 module "github_oidc" {
   source                 = "../../modules/github-oidc"
