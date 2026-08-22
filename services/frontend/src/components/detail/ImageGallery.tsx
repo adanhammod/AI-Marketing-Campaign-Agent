@@ -3,6 +3,7 @@ import type { AssetStatus } from './asset'
 import styles from './ImageGallery.module.css'
 
 export interface GalleryImage {
+  artifactId: string
   url: string
   sceneNumber: number | null | undefined
   attribution?: string | null
@@ -20,7 +21,7 @@ export function ImageGallery({ images, status }: ImageGalleryProps) {
       {images.length > 0 ? (
         <div className={styles.grid}>
           {images.map((image) => (
-            <figure key={image.url} className={styles.figure}>
+            <figure key={image.artifactId} className={styles.figure}>
               <img
                 src={image.url}
                 alt={`Scene ${image.sceneNumber ?? ''} visual for the campaign`.trim()}
