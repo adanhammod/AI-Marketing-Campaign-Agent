@@ -49,6 +49,8 @@ resource "aws_iam_policy" "runtime" {
 }
 
 resource "aws_iam_role_policy_attachment" "worker_runtime" {
-  role       = var.worker_role_name
+  count = try(trimspace(local.worker_role_name), "") == "" ? 0 : 1
+
+  role       = local.worker_role_name
   policy_arn = aws_iam_policy.runtime.arn
 }
