@@ -110,9 +110,22 @@ resource "aws_iam_role_policy_attachment" "local_runtime" {
   policy_arn = aws_iam_policy.local_runtime.arn
 }
 
-resource "aws_iam_role_policy_attachment" "worker_runtime" {
-  count = try(trimspace(var.worker_role_name), "") == "" ? 0 : 1
+locals {
+  # Explicit var.worker_role_name always wins; otherwise fall back to the
+  # cluster environment's real output. try() keeps this safe if the cluster
+  # stack hasn't been applied yet.
+  worker_role_name = try(
+    coalesce(
+      var.worker_role_name,
+      try(data.terraform_remote_state.cluster.outputs.worker_role_name, null),
+    ),
+    null,
+  )
+}
 
-  role       = var.worker_role_name
+resource "aws_iam_role_policy_attachment" "worker_runtime" {
+  count = try(trimspace(local.worker_role_name), "") == "" ? 0 : 1
+
+  role       = local.worker_role_name
   policy_arn = aws_iam_policy.local_runtime.arn
 }
