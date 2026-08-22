@@ -56,3 +56,15 @@ services/worker/assets/music/*.mp3
 *.tfstate
 *.tfstate.*
 .terraform/
+
+# Local generated files
+*.tfplan
+skills-lock.json
+services/skills-lock.json
+terraform/environments/cluster/tfplan
+
+# Local design references
+design-reference/
+
+# Local worker scratch scripts
+services/worker/scripts/
