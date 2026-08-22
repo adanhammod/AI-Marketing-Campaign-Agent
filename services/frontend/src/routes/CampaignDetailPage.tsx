@@ -15,6 +15,7 @@ import { VideoCard } from '../components/detail/VideoCard'
 import { VoiceoverCard } from '../components/detail/VoiceoverCard'
 import type { AssetStatus } from '../components/detail/asset'
 import styles from './CampaignDetailPage.module.css'
+import { useResolvedGalleryImages } from './useResolvedGalleryImages'
 
 type CampaignDetailResponse = components['schemas']['CampaignDetailResponse']
 type PublicArtifactReference = components['schemas']['PublicArtifactReference']
@@ -115,14 +116,7 @@ function CampaignDetailContent({
   const hasAudio = knownArtifacts.some((artifact) => artifact.artifact_type === 'AUDIO')
   const hasVideo = knownArtifacts.some((artifact) => artifact.artifact_type === 'VIDEO')
 
-  const signedImages: GalleryImage[] = (artifacts ?? [])
-    .filter((artifact) => artifact.artifact_type === 'IMAGE' && artifact.download_url)
-    .sort((a, b) => (a.scene_number ?? 0) - (b.scene_number ?? 0))
-    .map((artifact) => ({
-      url: artifact.download_url as string,
-      sceneNumber: artifact.scene_number,
-      attribution: artifact.attribution?.attribution_text,
-    }))
+  const signedImages = useResolvedGalleryImages(artifacts)
   const audioArtifact = (artifacts ?? []).find((artifact) => artifact.artifact_type === 'AUDIO')
   const videoArtifact = (artifacts ?? []).find((artifact) => artifact.artifact_type === 'VIDEO')
   const finalPackageArtifact = (artifacts ?? []).find(
