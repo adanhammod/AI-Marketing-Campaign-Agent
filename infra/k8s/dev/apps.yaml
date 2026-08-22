@@ -105,6 +105,22 @@ apiVersion: v1
 kind: Service
 metadata: {name: campaign-agent-frontend, namespace: dev}
 spec:
-  type: NodePort
   selector: {app: campaign-agent-frontend}
-  ports: [{port: 80, targetPort: 8080, nodePort: 30080}]
+  ports: [{port: 80, targetPort: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: campaign-agent
+  namespace: dev
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: {service: {name: campaign-agent-api, port: {number: 8000}}}
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: campaign-agent-frontend, port: {number: 80}}}
