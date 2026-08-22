@@ -27,7 +27,7 @@ from campaign_contracts.sqs import SQSJobMessage
 
 from campaign_worker.config import Settings
 from campaign_worker.consumer.sqs_consumer import MessageOutcome, SQSConsumer
-from campaign_worker.errors import LeaseConflict
+from campaign_worker.errors import LeaseConflict, WorkflowOperationError
 from campaign_worker.providers.base import ImageProvider, VideoProvider
 from campaign_worker.providers.mock_image_provider import MockImageProvider
 from campaign_worker.providers.mock_video_provider import MockVideoProvider
@@ -306,13 +306,18 @@ class _FailingVersionSaveAfterStepRepository(_RecordingRepository):
 
 
 def _processor(
-    image_provider=None, video_provider=None, is_cancelled=None, repository=None, creative_plan_provider=None
+    image_provider=None,
+    video_provider=None,
+    voice_provider=None,
+    is_cancelled=None,
+    repository=None,
+    creative_plan_provider=None,
 ) -> GraphJobProcessor:
     repository = repository or _RecordingRepository()
     processor = GraphJobProcessor(
         repository,
         image_provider or MockImageProvider(),
-        MockVoiceProvider(),
+        voice_provider or MockVoiceProvider(),
         video_provider or MockVideoProvider(),
         is_cancelled=is_cancelled,
         creative_plan_provider=creative_plan_provider,
@@ -685,6 +690,40 @@ async def test_images_failure_records_images_as_the_resume_step():
         if event.event_type == CampaignEventType.FAILED
     ]
     assert len(failure_events) == 1 and failure_events[0].details["retryable"] is True
+
+
+class _DurationRejectingVoicePipeline:
+    """A VoiceAssetPipeline (structural, deliberately not a VoiceProvider
+    subclass -- see build_start_graph's isinstance dispatch) simulating
+    PollyVoicePipeline.acquire() rejecting a far-out-of-range narration
+    duration, to prove the failure is attributed to WorkflowStep.VOICEOVER
+    (not VIDEO) by the graph's existing with_failure_attribution wiring."""
+
+    async def acquire(self, version, is_cancelled):
+        raise WorkflowOperationError(
+            "ARTIFACT_VALIDATION_FAILED", "narration duration incompatible with storyboard timing", retryable=False
+        )
+
+
+@pytest.mark.asyncio
+async def test_voiceover_duration_failure_records_voiceover_as_the_resume_step():
+    repository, processor = _processor(voice_provider=_DurationRejectingVoicePipeline())
+    version = _version()
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.FAILED
+    assert final.error is not None
+    assert final.error.code == "ARTIFACT_VALIDATION_FAILED"
+    assert final.retry.retryable is False
+    assert final.retry.resume_step == WorkflowStep.VOICEOVER
+    assert final.error.workflow_step == WorkflowStep.VOICEOVER
+    # progress made before the failing step (images) is preserved
+    assert final.strategy is not None
+    assert len(final.image_artifacts) == 3
 
 
 @pytest.mark.asyncio

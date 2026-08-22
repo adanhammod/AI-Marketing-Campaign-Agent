@@ -15,7 +15,7 @@
                         "video_codec":  "H.264",
                         "target_duration_seconds":  15,
                         "preferred_resolution":  "1080x1920",
-                        "max_duration_seconds":  17,
+                        "max_duration_seconds": 20,
                         "min_duration_seconds":  13,
                         "image_count":  3,
                         "output_format":  "MP4",

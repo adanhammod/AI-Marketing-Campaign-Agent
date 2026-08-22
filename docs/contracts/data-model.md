@@ -37,7 +37,7 @@ This document defines the language-neutral shared state, immutable version rules
 
 `schema_version`, `campaign_id`, `campaign_version`, `job_id`, `status`, `current_step`, `progress_percent`, `brief`, `constraints`, `completed_steps`, `retry`, `created_at`, and `updated_at`.
 
-The normalized brief contains `business_name`, `product_or_service`, `business_description`, `campaign_goal`, `platforms`, `tone`, `language`, optional `target_audience`, `key_message`, `call_to_action`, `brand_colors`, and optional reference-artifact ID. Constraints contain three images, three scenes, target duration 15 seconds, accepted duration 13–17 seconds, `9:16`, preferred 1080×1920, fallback 720×1280, and output MP4/H.264/AAC.
+The normalized brief contains `business_name`, `product_or_service`, `business_description`, `campaign_goal`, `platforms`, `tone`, `language`, optional `target_audience`, `key_message`, `call_to_action`, `brand_colors`, and optional reference-artifact ID. Constraints contain three images, three scenes, target duration 15 seconds, accepted duration 13–20 seconds, `9:16`, preferred 1080×1920, fallback 720×1280, and output MP4/H.264/AAC.
 
 ### Optional Generated Fields
 

@@ -708,13 +708,13 @@ async def test_pipeline_rejects_audio_duration_just_below_scale_bound():
 
 @pytest.mark.asyncio
 async def test_pipeline_rejects_duration_inside_old_fixed_band_but_below_constraints_minimum():
-    # Regression test proving the pre-render check now derives its bounds
-    # from CampaignConstraints (13-17s for this 15s storyboard, i.e. scale
-    # [0.8667, 1.1333]) rather than the old fixed [0.85, 1.25] band. 12.9s
-    # gives scale 0.86 -- the OLD floor (0.85) would have accepted this,
-    # but it's below the real product minimum of 13s, so it must now be
-    # rejected here rather than only being caught by _validate_output after
-    # a full render.
+    # Regression test proving the pre-render check derives its bounds from
+    # CampaignConstraints (13-20s, i.e. scale [0.8667, 1.3333] for this 15s
+    # storyboard) rather than the old fixed [0.85, 1.25] band. 12.9s gives
+    # scale 0.86 -- the OLD floor (0.85) would have accepted this, but it's
+    # below the real product minimum of 13s, so it must still be rejected
+    # here rather than only being caught by _validate_output after a full
+    # render.
     version = _version()
     s3 = _populated_s3(version)
     store = S3ArtifactStore(s3, "private-bucket")
@@ -737,32 +737,35 @@ async def test_pipeline_rejects_duration_inside_old_fixed_band_but_below_constra
 
 
 @pytest.mark.asyncio
-async def test_pipeline_rejects_duration_inside_old_fixed_band_but_above_constraints_maximum():
-    # Direct regression test for the real Luna production incident: the
-    # retargeted narration fix produced an 18.696s Polly voiceover against
-    # this 15s storyboard (scale 1.2464). The OLD fixed ceiling (1.25)
-    # would have accepted this and gone on to render (and, separately,
-    # time out) -- but 18.696s exceeds the real product maximum of 17s, so
-    # it must now be rejected here, before any ffmpeg render is attempted.
+async def test_pipeline_accepts_the_real_luna_incident_duration_under_the_widened_maximum():
+    # Direct regression test for the real deployed failure this widened
+    # bound fixes: the retargeted narration fix produced an 18.696s Polly
+    # voiceover against this 15s storyboard (scale 1.246). Under the OLD
+    # fixed 13-17s bound this was wrongly rejected here as
+    # ARTIFACT_VALIDATION_FAILED even though it's a normal, usable narration
+    # length. The product correction widened the accepted range to 13-20s
+    # (target duration is 15s, not a hard ceiling) precisely so a campaign
+    # does not fail merely because its narration lands between 17 and 20
+    # seconds -- this must now succeed and scale the scenes accordingly.
     version = _version()
     s3 = _populated_s3(version)
     store = S3ArtifactStore(s3, "private-bucket")
 
-    class _JustAboveConstraintsMaxRunners(_RecordingRunners):
+    class _RealLunaIncidentRunners(_RecordingRunners):
         async def ffprobe(self, ffprobe_path, file_path, *, timeout_seconds, extra_args=None):
             if str(file_path).endswith("voiceover.mp3"):
                 return {"format": {"duration": "18.696"}, "streams": [{"codec_type": "audio", "codec_name": "aac"}]}
             return _VALID_VIDEO_PROBE
 
-    runners = _JustAboveConstraintsMaxRunners()
+    runners = _RealLunaIncidentRunners()
     pipeline = _pipeline(s3, store, runners)
 
-    with pytest.raises(WorkflowOperationError) as error:
-        await pipeline.acquire(version, _never_cancelled)
-    assert error.value.code == "ARTIFACT_VALIDATION_FAILED"
-    assert str(error.value) == "narration duration incompatible with storyboard timing"
-    assert error.value.retryable is False
-    assert runners.ffmpeg_calls == []
+    await pipeline.acquire(version, _never_cancelled)
+
+    render_args = runners.ffmpeg_calls[-1]
+    # Each of the 3 equal 5s scenes scales by 18.696/15 = 1.2464 -> 6.232s each.
+    durations = [render_args[i + 1] for i, token in enumerate(render_args) if token == "-t"]
+    assert durations == ["6.232", "6.232", "6.232"]
 
 
 @pytest.mark.asyncio

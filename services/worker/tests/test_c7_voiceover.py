@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -264,7 +265,44 @@ def _normalizer() -> AudioNormalizer:
     return AudioNormalizer(ffmpeg_runner=_PassthroughNormalizerRunner())
 
 
-def _pipeline(polly=None, store=None, normalizer=None, **overrides) -> PollyVoicePipeline:
+class _FakeDurationFfprobeRunner:
+    """Fake ffprobe_runner for PollyVoicePipeline's post-synthesis duration
+    check: returns canned durations in sequence (first call probes the raw
+    synthesized/loudness-normalized audio; a second call, only made if a
+    tempo correction ran, probes the adjusted output). The last value is
+    reused for any further calls. Defaults to a comfortably in-range
+    duration, so tests that don't care about timing behave exactly as
+    before this feature existed."""
+
+    def __init__(self, durations: list[float] | None = None) -> None:
+        self._durations = list(durations) if durations is not None else [15.0]
+        self.calls: list[str] = []
+
+    async def __call__(self, ffprobe_path, file_path, *, timeout_seconds, extra_args=None):
+        self.calls.append(str(file_path))
+        duration = self._durations.pop(0) if len(self._durations) > 1 else self._durations[0]
+        return {"format": {"duration": str(duration)}, "streams": [{"codec_type": "audio", "codec_name": "mp3"}]}
+
+
+class _FakeTempoFfmpegRunner:
+    """Fake ffmpeg_runner for the tempo-correction path: echoes input bytes
+    through unchanged (content isn't asserted by these tests -- the paired
+    _FakeDurationFfprobeRunner's second canned value is what represents the
+    "real" post-correction duration)."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def __call__(self, ffmpeg_path, args, *, timeout_seconds, unavailable_code="VIDEO_PROVIDER_UNAVAILABLE"):
+        self.calls.append(args)
+        input_path = args[args.index("-i") + 1]
+        output_path = args[-1]
+        Path(output_path).write_bytes(Path(input_path).read_bytes())
+
+
+def _pipeline(
+    polly=None, store=None, normalizer=None, ffprobe_runner=None, ffmpeg_runner=None, **overrides
+) -> PollyVoicePipeline:
     return PollyVoicePipeline(
         polly or _Polly(),
         store or S3ArtifactStore(_S3(), "private-bucket"),
@@ -272,6 +310,8 @@ def _pipeline(polly=None, store=None, normalizer=None, **overrides) -> PollyVoic
         normalizer or _normalizer(),
         voice_id=overrides.get("voice_id"),
         engine=overrides.get("engine", "neural"),
+        ffprobe_runner=ffprobe_runner or _FakeDurationFfprobeRunner(),
+        ffmpeg_runner=ffmpeg_runner or _FakeTempoFfmpegRunner(),
     )
 
 
@@ -295,6 +335,106 @@ async def test_pipeline_synthesizes_and_stores_new_voiceover():
     assert call["Engine"] == "neural"
     assert call["OutputFormat"] == "mp3"
     assert call["TextType"] == "ssml"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_records_measured_duration_and_no_tempo_factor_when_in_range():
+    version = _version()
+    probe = _FakeDurationFfprobeRunner([15.0])
+    pipeline = _pipeline(ffprobe_runner=probe)
+
+    artifact = await pipeline.acquire(version, _never_cancelled)
+
+    prefix = f"campaigns/{version.campaign_id}/versions/{version.campaign_version}/audio/voiceover"
+    store: S3ArtifactStore = pipeline._store  # noqa: SLF001
+    metadata = json.loads(store._client.objects[f"{prefix}.metadata.json"])  # noqa: SLF001
+    assert metadata["measured_duration_seconds"] == 15.0
+    assert metadata["tempo_factor"] is None
+    assert artifact.provider == "polly"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_applies_bounded_tempo_correction_for_duration_slightly_above_hard_max():
+    # 20.4s is just above the 20s hard max -- a small, bounded speed-up
+    # correction should bring it back in range rather than failing.
+    version = _version()
+    probe = _FakeDurationFfprobeRunner([20.4, 19.9])
+    ffmpeg = _FakeTempoFfmpegRunner()
+    pipeline = _pipeline(ffprobe_runner=probe, ffmpeg_runner=ffmpeg)
+
+    artifact = await pipeline.acquire(version, _never_cancelled)
+
+    assert artifact.provider == "polly"
+    assert len(ffmpeg.calls) == 1
+    applied_filter = ffmpeg.calls[0][ffmpeg.calls[0].index("-af") + 1]
+    assert applied_filter.startswith("atempo=")
+    factor = float(applied_filter.removeprefix("atempo="))
+    assert 0.92 <= factor <= 1.08
+
+    prefix = f"campaigns/{version.campaign_id}/versions/{version.campaign_version}/audio/voiceover"
+    store: S3ArtifactStore = pipeline._store  # noqa: SLF001
+    metadata = json.loads(store._client.objects[f"{prefix}.metadata.json"])  # noqa: SLF001
+    assert metadata["measured_duration_seconds"] == 19.9
+    assert metadata["tempo_factor"] == pytest.approx(factor)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_applies_bounded_tempo_correction_for_duration_slightly_below_hard_min():
+    # 12.6s is just below the 13s hard min -- a small, bounded slow-down
+    # correction should bring it back in range rather than failing.
+    version = _version()
+    probe = _FakeDurationFfprobeRunner([12.6, 13.1])
+    ffmpeg = _FakeTempoFfmpegRunner()
+    pipeline = _pipeline(ffprobe_runner=probe, ffmpeg_runner=ffmpeg)
+
+    artifact = await pipeline.acquire(version, _never_cancelled)
+
+    assert artifact.provider == "polly"
+    assert len(ffmpeg.calls) == 1
+    applied_filter = ffmpeg.calls[0][ffmpeg.calls[0].index("-af") + 1]
+    factor = float(applied_filter.removeprefix("atempo="))
+    assert 0.92 <= factor <= 1.08
+
+    prefix = f"campaigns/{version.campaign_id}/versions/{version.campaign_version}/audio/voiceover"
+    store: S3ArtifactStore = pipeline._store  # noqa: SLF001
+    metadata = json.loads(store._client.objects[f"{prefix}.metadata.json"])  # noqa: SLF001
+    assert metadata["measured_duration_seconds"] == 13.1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rejects_far_out_of_range_duration_as_voiceover_step_failure():
+    # ~22s requires a speed-up factor far beyond the safe +-8% bound -- must
+    # fail here (attributed to the voiceover step by the caller's graph
+    # wiring), not be aggressively stretched, and never reach the video step.
+    version = _version()
+    probe = _FakeDurationFfprobeRunner([22.0])
+    ffmpeg = _FakeTempoFfmpegRunner()
+    pipeline = _pipeline(ffprobe_runner=probe, ffmpeg_runner=ffmpeg)
+
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+
+    assert error.value.code == "ARTIFACT_VALIDATION_FAILED"
+    assert error.value.retryable is False
+    assert ffmpeg.calls == []  # no mutation attempted -- rejected before any ffmpeg call
+
+
+@pytest.mark.asyncio
+async def test_pipeline_accepts_durations_across_the_whole_valid_range_without_tempo_calls():
+    # 13.0, 15.0 (target), 17.4, 19.5, and 20.0 are all valid under the
+    # 13-20s hard bound and must pass through completely untouched -- this
+    # is the exact product correction: narration between 17s and 20s is
+    # normal, not a failure.
+    for duration in (13.0, 15.0, 17.4, 19.5, 20.0):
+        version = _version()
+        probe = _FakeDurationFfprobeRunner([duration])
+        ffmpeg = _FakeTempoFfmpegRunner()
+        pipeline = _pipeline(ffprobe_runner=probe, ffmpeg_runner=ffmpeg)
+
+        artifact = await pipeline.acquire(version, _never_cancelled)
+
+        assert artifact.provider == "polly", f"duration={duration}"
+        assert ffmpeg.calls == [], f"duration={duration}: no tempo correction should be attempted"
 
 
 @pytest.mark.asyncio
@@ -482,7 +622,7 @@ async def test_pipeline_cancellation_before_validation():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_cancellation_before_upload():
+async def test_pipeline_cancellation_before_duration_check():
     version = _version()
     polly = _Polly()
     pipeline = _pipeline(polly)
@@ -494,6 +634,22 @@ async def test_pipeline_cancellation_before_upload():
 
     with pytest.raises(NodeCancelled) as error:
         await pipeline.acquire(version, cancel_third_check)
+    assert "before_duration_check" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_cancellation_before_upload():
+    version = _version()
+    polly = _Polly()
+    pipeline = _pipeline(polly)
+    calls = {"n": 0}
+
+    async def cancel_fourth_check():
+        calls["n"] += 1
+        return calls["n"] == 4
+
+    with pytest.raises(NodeCancelled) as error:
+        await pipeline.acquire(version, cancel_fourth_check)
     assert "before_s3_upload" in str(error.value)
 
 
