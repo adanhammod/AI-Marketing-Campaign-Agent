@@ -212,12 +212,15 @@ async def test_create_storyboard_narration_uses_fallbacks_when_optional_brief_fi
 async def test_create_storyboard_narration_is_more_conservative_than_previous_luna_incident():
     # Regression guard for a real production incident: the first iteration
     # of this narration fix (commit e72bdd5) produced 44 words combined for
-    # this exact brief, which Polly measured at 18.696s -- outside the real
-    # 13-17s video duration constraint. This does NOT assert any specific
-    # duration (Polly timing is not a deterministic function of word count
-    # alone -- see the two real, non-linear data points from this incident);
-    # it only guards that the retargeted narration is shorter than that
-    # known over-length baseline for the same brief content.
+    # this exact brief, which Polly measured at 18.696s. (18.696s is itself
+    # valid under the current 13-20s hard bound and would no longer fail --
+    # see test_c8_video.py's real-incident regression test -- but 44 words
+    # is still well above the preferred TARGET band this function aims for.)
+    # This does NOT assert any specific duration (Polly timing is not a
+    # deterministic function of word count alone -- see the two real,
+    # non-linear data points from this incident); it only guards that the
+    # retargeted narration is shorter than that known baseline for the same
+    # brief content.
     brief = _short_message_brief()
     state: GraphState = {"version": _version(brief=brief)}
     strategized = await nodes.create_strategy(state)
@@ -391,6 +394,93 @@ async def test_create_storyboard_narration_scenes_remain_non_empty_and_well_form
             assert ".." not in stripped, "no doubled punctuation from truncation/extension"
 
 
+def test_apply_duration_budget_leaves_narration_between_ideal_band_and_hard_max_untouched():
+    # Narration estimated above the preferred TARGET band (14-16s) but still
+    # comfortably under the 20s hard max is now *valid* and must not be
+    # shortened -- only genuinely excessive narration (near the hard max)
+    # should trigger the shrink path. This directly encodes the product
+    # correction: 15s is a target, not a ceiling.
+    brief = _very_short_brief()
+    constraints = CampaignConstraints()
+    _, target_max_words = narration_timing.target_word_range()
+    shrink_trigger = narration_timing.shrink_trigger_word_count(constraints.max_duration_seconds)
+    # A word count clearly above the ideal ceiling but clearly below the
+    # shrink trigger.
+    mid_word_count = (target_max_words + shrink_trigger) // 2
+    assert target_max_words < mid_word_count < shrink_trigger
+    scene1 = nodes.SceneNarration(required=_n_word_sentence(10), optional="You'll love it, too.")
+    scene2 = nodes.SceneNarration(required=_n_word_sentence(10), optional="Explore it today.")
+    remaining_words = mid_word_count - narration_timing.word_count(scene1.full_text()) - narration_timing.word_count(
+        scene2.full_text()
+    )
+    scene3 = nodes.SceneNarration(required=_n_word_sentence(remaining_words))
+    scenes = [scene1, scene2, scene3]
+    expected_total = sum(narration_timing.word_count(sn.full_text()) for sn in scenes)
+    assert expected_total == mid_word_count
+
+    result = nodes._apply_duration_budget(scenes, brief, constraints)
+
+    assert result == [sn.full_text() for sn in scenes], "optional filler must survive untouched below the trigger"
+
+
+def test_apply_duration_budget_shrinks_only_optional_filler_when_unnecessarily_long():
+    brief = _very_short_brief()
+    constraints = CampaignConstraints()
+    shrink_trigger = narration_timing.shrink_trigger_word_count(constraints.max_duration_seconds)
+    scene1 = nodes.SceneNarration(required=f"Meet {brief.product_or_service}, made by {brief.business_name}.")
+    scene2 = nodes.SceneNarration(required=_n_word_sentence(10), optional="You'll love it, too.")
+    scene3 = nodes.SceneNarration(
+        required=_n_word_sentence(10),
+        optional=f"Explore {brief.product_or_service} from {brief.business_name} today.",
+    )
+    # Push well over the trigger using only required-side word count on
+    # scene 1, so dropping every optional clause is the only lever available.
+    over_budget_words = shrink_trigger + 15
+    scene1_padding = _n_word_sentence(
+        over_budget_words
+        - narration_timing.word_count(scene1.required)
+        - narration_timing.word_count(scene2.full_text())
+        - narration_timing.word_count(scene3.full_text())
+    )
+    scene1 = nodes.SceneNarration(required=f"{scene1.required} {scene1_padding}".strip())
+    scenes = [scene1, scene2, scene3]
+    total_before = sum(narration_timing.word_count(sn.full_text()) for sn in scenes)
+    assert total_before > shrink_trigger
+
+    result = nodes._apply_duration_budget(scenes, brief, constraints)
+
+    # Required content survives verbatim in every scene...
+    assert scene1.required in result[0]
+    assert scene2.required in result[1]
+    assert scene3.required in result[2]
+    # ...but the optional filler is gone (or word count is at/under trigger).
+    total_after = sum(narration_timing.word_count(text) for text in result)
+    assert total_after <= total_before
+    assert "You'll love it, too." not in result[1]
+    assert f"Explore {brief.product_or_service} from {brief.business_name} today." not in result[2]
+
+
+def test_apply_duration_budget_leaves_inherently_long_required_content_alone():
+    # If dropping every scene's optional filler still leaves the estimate
+    # over the trigger (e.g. an inherently long business/product name baked
+    # into scene 1's `required` text, which has no `optional` at all),
+    # nothing further is cut -- mangling required content is never an
+    # acceptable fallback.
+    brief = _very_short_brief()
+    constraints = CampaignConstraints()
+    shrink_trigger = narration_timing.shrink_trigger_word_count(constraints.max_duration_seconds)
+    huge_required = _n_word_sentence(shrink_trigger + 50)
+    scenes = [
+        nodes.SceneNarration(required=huge_required),
+        nodes.SceneNarration(required=_n_word_sentence(5), optional="You'll love it, too."),
+        nodes.SceneNarration(required=_n_word_sentence(5), optional="Explore it today."),
+    ]
+
+    result = nodes._apply_duration_budget(scenes, brief, constraints)
+
+    assert result[0] == huge_required
+
+
 def test_best_fitting_candidate_never_returns_a_truncated_phrase():
     candidates = ["It's Bold.", "A much longer candidate sentence that will not fit the budget."]
     # Room for neither candidate: must add nothing, never cut the short one down further.
@@ -419,16 +509,18 @@ async def test_apply_duration_budget_adds_nothing_when_only_one_to_three_words_o
     # point the loop's own "total >= min_words" guard stops it from
     # attempting (or needing) another extension at all.
     brief = _very_short_brief()  # tone/description candidates are 4+ words: neither fits a 1-3 word gap
+    constraints = CampaignConstraints()
     min_words, max_words = narration_timing.target_word_range()
     for gap in (1, 2, 3):
         core_total = max_words - gap
         assert core_total >= min_words
-        core = [_n_word_sentence(10), _n_word_sentence(10), _n_word_sentence(core_total - 20)]
-        assert sum(narration_timing.word_count(n) for n in core) == core_total
+        core_texts = [_n_word_sentence(10), _n_word_sentence(10), _n_word_sentence(core_total - 20)]
+        assert sum(narration_timing.word_count(n) for n in core_texts) == core_total
+        core = [nodes.SceneNarration(required=text) for text in core_texts]
 
-        result = nodes._apply_duration_budget(core, brief)
+        result = nodes._apply_duration_budget(core, brief, constraints)
 
-        assert result == core, f"gap={gap}: already at/above the floor, nothing should be added or cut"
+        assert result == core_texts, f"gap={gap}: already at/above the floor, nothing should be added or cut"
 
 
 _create_creative_plan = nodes.make_create_creative_plan_node(DeterministicCreativePlanProvider())

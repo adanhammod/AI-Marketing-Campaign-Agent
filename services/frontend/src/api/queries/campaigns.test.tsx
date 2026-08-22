@@ -88,6 +88,7 @@ describe('useCreateCampaign', () => {
       tone: 'playful',
       language: 'en',
       brand_colors: [],
+      video_style: 'VOICEOVER_AD',
     })
 
     expect(response).toEqual(campaignCreationAcceptedFixture)
@@ -114,6 +115,7 @@ describe('useCreateCampaign', () => {
       tone: 'playful',
       language: 'en',
       brand_colors: [],
+      video_style: 'VOICEOVER_AD',
     })
 
     expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['campaigns'] }))

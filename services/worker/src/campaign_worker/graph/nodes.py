@@ -1,9 +1,11 @@
 import hashlib
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4, uuid5
 
 from campaign_contracts.campaign import (
+    CampaignConstraints,
     CampaignCopy,
     CampaignVersion,
     ChannelCopy,
@@ -98,7 +100,21 @@ def _first_complete_sentence(text: str) -> str:
     return f"{text}." if text else text
 
 
-def _scene_narration(scene_number: int, brief: NormalizedCampaignBrief, strategy: StrategyOutput) -> str:
+@dataclass(frozen=True, slots=True)
+class SceneNarration:
+    """A scene's narration split into required (never droppable) and
+    optional (safe-to-omit filler) content, so duration budgeting can
+    shrink narration by removing only `optional` -- required always survives
+    intact, unmodified, un-truncated."""
+
+    required: str
+    optional: str | None = None
+
+    def full_text(self) -> str:
+        return self.required if self.optional is None else f"{self.required} {self.optional}"
+
+
+def _scene_narration(scene_number: int, brief: NormalizedCampaignBrief, strategy: StrategyOutput) -> SceneNarration:
     # Deterministic, distinct-per-scene narration built from existing brief/
     # strategy fields (no LLM call). Scene 2 deliberately does not narrate
     # strategy.audience: it's a targeting spec (e.g. "aged 22-40"), not ad
@@ -107,19 +123,24 @@ def _scene_narration(scene_number: int, brief: NormalizedCampaignBrief, strategy
     # read-aloud delivery. product_or_service/business_name are names and
     # are never modified here -- cutting a name mid-word/mid-phrase is never
     # acceptable, even under duration pressure (see _apply_duration_budget,
-    # which only ever *extends* narration, never trims it). key_message/CTA
-    # can be free-form prose, so only their first complete sentence is used
-    # -- dropping any trailing sentences is safe (what remains still reads
-    # as a complete, standalone thought), unlike cutting mid-sentence.
+    # which only ever *extends* or drops -- via the `optional` field above --
+    # never trims/truncates anything). key_message/CTA can be free-form
+    # prose, so only their first complete sentence is used -- dropping any
+    # trailing sentences is safe (what remains still reads as a complete,
+    # standalone thought), unlike cutting mid-sentence. The trailing
+    # "You'll love it, too."/"Explore ... today." clauses are marked
+    # `optional`: safe filler/reinforcement, droppable without losing
+    # essential campaign meaning (product/business name is already stated
+    # in scene 1; the CTA/key_message sentence itself is `required`).
     product = brief.product_or_service
     business_name = brief.business_name
     if scene_number == 1:
-        return f"Meet {product}, made by {business_name}."
+        return SceneNarration(required=f"Meet {product}, made by {business_name}.")
     if scene_number == 2:
         key_message = _first_complete_sentence(strategy.key_message)
-        return f"{key_message} You'll love it, too."
+        return SceneNarration(required=key_message, optional="You'll love it, too.")
     cta = _first_complete_sentence(brief.call_to_action or "Learn more")
-    return f"{cta} Explore {product} from {business_name} today."
+    return SceneNarration(required=cta, optional=f"Explore {product} from {business_name} today.")
 
 
 def _extension_candidates(brief: NormalizedCampaignBrief) -> list[str]:
@@ -152,22 +173,48 @@ def _best_fitting_candidate(candidates: list[str], remaining_words: int, used: s
     return max(fitting, key=narration_timing.word_count)
 
 
-def _apply_duration_budget(narrations: list[str], brief: NormalizedCampaignBrief) -> list[str]:
-    """Couples narration length to the campaign's fixed duration constraint
-    before Polly is ever called, by *extending* narration estimated too
-    short with real, complete, appropriately-sized content (never by
-    trimming/cutting anything -- see _best_fitting_candidate). Targets the
-    preferred inner band from audio/narration_timing.py. Narration that's
-    already at or above that band (e.g. from an unusually long business
-    name or key_message) is left completely untouched: the hard 13-17s
-    constraint, enforced later and unchanged in video/pipeline.py, remains
-    the final arbiter for such cases rather than this best-effort sizing
-    step ever mangling real campaign content to force a fit."""
-    narrations = list(narrations)
+def _apply_duration_budget(
+    scene_narrations: list[SceneNarration], brief: NormalizedCampaignBrief, constraints: CampaignConstraints
+) -> list[str]:
+    """Couples narration length to the campaign's duration constraint before
+    Polly is ever called -- symmetrically, but not aggressively:
+
+    - Too short (estimate below the preferred TARGET band): *extend* with
+      real, complete, appropriately-sized content (never by
+      trimming/cutting anything -- see _best_fitting_candidate).
+    - Too long (estimate above shrink_trigger_word_count's hard-max-relative
+      threshold): drop only `optional` filler (see SceneNarration), never
+      `required` content -- business_name/product_or_service/the
+      required key_message or CTA sentence always survive intact. Narration
+      merely above the ideal TARGET band but still comfortably under the
+      hard max is deliberately left untouched: the real Polly-measured
+      duration (audio/pipeline.py) plus a bounded tempo correction
+      (audio/tempo_normalizer.py) are what actually decide such cases now,
+      not this best-effort generation-time estimate.
+
+    If dropping every scene's optional filler still leaves the estimate
+    over budget (e.g. an inherently long business/product name), it's left
+    as-is: mangling required campaign content to force a fit is never an
+    acceptable fallback here either.
+    """
     min_words, max_words = narration_timing.target_word_range()
-    total = sum(narration_timing.word_count(n) for n in narrations)
+    texts = [sn.full_text() for sn in scene_narrations]
+    total = sum(narration_timing.word_count(t) for t in texts)
+
+    shrink_trigger = narration_timing.shrink_trigger_word_count(constraints.max_duration_seconds)
+    if total > shrink_trigger:
+        for index in (2, 1):  # scene 3's filler is the most redundant (restates scene 1); scene 2's next
+            if total <= shrink_trigger:
+                break
+            optional = scene_narrations[index].optional
+            if optional is None:
+                continue
+            texts[index] = scene_narrations[index].required
+            total -= narration_timing.word_count(optional)
+        return texts
+
     if total >= min_words:
-        return narrations
+        return texts
 
     candidates = _extension_candidates(brief)
     used: set[str] = set()
@@ -177,11 +224,11 @@ def _apply_duration_budget(narrations: list[str], brief: NormalizedCampaignBrief
         candidate = _best_fitting_candidate(candidates, max_words - total, used)
         if candidate is None:
             continue
-        narrations[index] = f"{narrations[index]} {candidate}".strip()
+        texts[index] = f"{texts[index]} {candidate}".strip()
         total += narration_timing.word_count(candidate)
         used.add(candidate)
 
-    return narrations
+    return texts
 
 
 async def create_storyboard(state: GraphState) -> GraphState:
@@ -192,6 +239,7 @@ async def create_storyboard(state: GraphState) -> GraphState:
     narrations = _apply_duration_budget(
         [_scene_narration(index, version.brief, strategy) for index in (1, 2, 3)],
         version.brief,
+        version.constraints,
     )
     scenes = [
         StoryboardScene(

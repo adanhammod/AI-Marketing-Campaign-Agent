@@ -4,1404 +4,1362 @@
  */
 
 export interface paths {
-  '/api/v1/campaigns': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** List Campaigns */
-    get: operations['list_campaigns_api_v1_campaigns_get']
-    put?: never
-    /** Create Campaign */
-    post: operations['create_campaign_api_v1_campaigns_post']
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/api/v1/campaigns/{campaign_id}': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Get Campaign */
-    get: operations['get_campaign_api_v1_campaigns__campaign_id__get']
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/api/v1/campaigns/{campaign_id}/artifacts': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Get Campaign Artifacts */
-    get: operations['get_campaign_artifacts_api_v1_campaigns__campaign_id__artifacts_get']
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/api/v1/campaigns/{campaign_id}/events': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Get Campaign Events */
-    get: operations['get_campaign_events_api_v1_campaigns__campaign_id__events_get']
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/api/v1/campaigns/{campaign_id}/versions/{version}/approve': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /** Approve Campaign */
-    post: operations['approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post']
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/api/v1/campaigns/{campaign_id}/versions/{version}/cancel': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /** Cancel Campaign */
-    post: operations['cancel_campaign_api_v1_campaigns__campaign_id__versions__version__cancel_post']
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/api/v1/campaigns/{campaign_id}/versions/{version}/retry': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /** Retry Campaign */
-    post: operations['retry_campaign_api_v1_campaigns__campaign_id__versions__version__retry_post']
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/api/v1/campaigns/{campaign_id}/versions/{version}/revisions': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /** Revise Campaign */
-    post: operations['revise_campaign_api_v1_campaigns__campaign_id__versions__version__revisions_post']
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/health/live': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Live */
-    get: operations['live_health_live_get']
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/health/ready': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Ready */
-    get: operations['ready_health_ready_get']
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
+    "/api/v1/campaigns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Campaigns */
+        get: operations["list_campaigns_api_v1_campaigns_get"];
+        put?: never;
+        /** Create Campaign */
+        post: operations["create_campaign_api_v1_campaigns_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/{campaign_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Campaign */
+        get: operations["get_campaign_api_v1_campaigns__campaign_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/{campaign_id}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Campaign Artifacts */
+        get: operations["get_campaign_artifacts_api_v1_campaigns__campaign_id__artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/{campaign_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Campaign Events */
+        get: operations["get_campaign_events_api_v1_campaigns__campaign_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/{campaign_id}/versions/{version}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Campaign */
+        post: operations["approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/{campaign_id}/versions/{version}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Campaign */
+        post: operations["cancel_campaign_api_v1_campaigns__campaign_id__versions__version__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/{campaign_id}/versions/{version}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Campaign */
+        post: operations["retry_campaign_api_v1_campaigns__campaign_id__versions__version__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/{campaign_id}/versions/{version}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revise Campaign */
+        post: operations["revise_campaign_api_v1_campaigns__campaign_id__versions__version__revisions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live */
+        get: operations["live_health_live_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ready */
+        get: operations["ready_health_ready_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
-export type webhooks = Record<string, never>
+export type webhooks = Record<string, never>;
 export interface components {
-  schemas: {
-    /**
-     * Actor
-     * @enum {string}
-     */
-    Actor: 'FASTAPI' | 'LANGGRAPH_WORKER' | 'DEMO_USER' | 'SYSTEM'
-    /** ApprovalRecord */
-    ApprovalRecord: {
-      /**
-       * Actor
-       * @default DEMO_USER
-       */
-      actor: string
-      /**
-       * Approval Id
-       * Format: uuid
-       */
-      approval_id: string
-      /**
-       * Approved At
-       * Format: date-time
-       */
-      approved_at: string
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string
-      /**
-       * Decision
-       * @default APPROVED
-       */
-      decision: string
-      /**
-       * Lock Version
-       * @default 1
-       */
-      lock_version: number
-      /** Manifest Checksum */
-      manifest_checksum: string
-      /** Note */
-      note?: string | null
-    }
-    /** ApprovalRequest */
-    ApprovalRequest: {
-      /** Note */
-      note?: string | null
-      /** Review Manifest Checksum */
-      review_manifest_checksum: string
-    }
-    /** ApprovalResponse */
-    ApprovalResponse: {
-      /**
-       * Approval Id
-       * Format: uuid
-       */
-      approval_id: string
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /**
-       * Job Id
-       * Format: uuid
-       */
-      job_id: string
-      status: components['schemas']['CampaignStatus']
-    }
-    /** ArtifactAttribution */
-    ArtifactAttribution: {
-      /** Attribution Text */
-      attribution_text: string
-      /** Creator Name */
-      creator_name: string
-      /**
-       * Creator Profile Url
-       * Format: uri
-       */
-      creator_profile_url: string
-      /** Provider Asset Id */
-      provider_asset_id: string
-      /**
-       * Provider Url
-       * Format: uri
-       */
-      provider_url: string
-      /**
-       * Source Page Url
-       * Format: uri
-       */
-      source_page_url: string
-    }
-    /**
-     * ArtifactType
-     * @enum {string}
-     */
-    ArtifactType:
-      | 'REFERENCE_IMAGE'
-      | 'IMAGE'
-      | 'AUDIO'
-      | 'VIDEO'
-      | 'STORYBOARD'
-      | 'MANIFEST'
-      | 'REVIEW_PACKAGE'
-      | 'FINAL_PACKAGE'
-      | 'PROVIDER_DIAGNOSTIC'
-    /** CampaignArtifactsResponse */
-    CampaignArtifactsResponse: {
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /** Items */
-      items: components['schemas']['PublicArtifactReference'][]
-    }
-    /** CampaignCopy */
-    CampaignCopy: {
-      /** Call To Action */
-      call_to_action: string
-      /** Caption */
-      caption: string
-      /** Channel Variants */
-      channel_variants: components['schemas']['ChannelCopy'][]
-      /** Hashtags */
-      hashtags: string[]
-      /** Headline */
-      headline: string
-    }
-    /** CampaignCreationAcceptedResponse */
-    CampaignCreationAcceptedResponse: {
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /**
-       * Job Id
-       * Format: uuid
-       */
-      job_id: string
-      /** Links */
-      links: {
-        [key: string]: string
-      }
-      /** Progress Percent */
-      progress_percent: number
-      status: components['schemas']['CampaignStatus']
-    }
-    /** CampaignCreationRequest */
-    CampaignCreationRequest: {
-      /** Brand Colors */
-      brand_colors?: string[]
-      /** Business Description */
-      business_description: string
-      /** Business Name */
-      business_name: string
-      /** Call To Action */
-      call_to_action?: string | null
-      /** Campaign Goal */
-      campaign_goal: string
-      /** Key Message */
-      key_message?: string | null
-      /** Language */
-      language: string
-      /** Platforms */
-      platforms: string[]
-      /** Product Or Service */
-      product_or_service: string
-      /** Reference Artifact Id */
-      reference_artifact_id?: string | null
-      /** Target Audience */
-      target_audience?: string | null
-      /** Tone */
-      tone: string
-    }
-    /** CampaignDetailResponse */
-    CampaignDetailResponse: {
-      /** Actions */
-      actions?: {
-        [key: string]: string
-      }
-      approval?: components['schemas']['ApprovalRecord'] | null
-      /** Artifacts */
-      artifacts?: components['schemas']['PublicArtifactReference'][]
-      brief: components['schemas']['NormalizedCampaignBrief']
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /** Cancellation Reason */
-      cancellation_reason?: string | null
-      /** Cancelled At */
-      cancelled_at?: string | null
-      /** Completed Steps */
-      completed_steps?: components['schemas']['WorkflowStep'][]
-      copy?: components['schemas']['CampaignCopy'] | null
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string
-      current_step?: components['schemas']['WorkflowStep'] | null
-      /** Current Version */
-      current_version: number
-      error?: components['schemas']['SanitizedWorkflowError'] | null
-      /** Event Sequence */
-      event_sequence: number
-      /** Latest Final Version */
-      latest_final_version?: number | null
-      /** Progress Percent */
-      progress_percent: number
-      /** Retry Eligible */
-      retry_eligible: boolean
-      /** Review Manifest Checksum */
-      review_manifest_checksum?: string | null
-      revision?: components['schemas']['RevisionFeedback'] | null
-      status: components['schemas']['CampaignStatus']
-      storyboard?: components['schemas']['Storyboard'] | null
-      strategy?: components['schemas']['StrategyOutput'] | null
-      /** Title */
-      title: string
-      /**
-       * Updated At
-       * Format: date-time
-       */
-      updated_at: string
-    }
-    /** CampaignEvent */
-    CampaignEvent: {
-      actor: components['schemas']['Actor']
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /**
-       * Correlation Id
-       * Format: uuid
-       */
-      correlation_id: string
-      /** Details */
-      details?: {
-        [key: string]: unknown
-      }
-      /**
-       * Event Id
-       * Format: uuid
-       */
-      event_id: string
-      /** Event Sequence */
-      event_sequence: number
-      event_type: components['schemas']['CampaignEventType']
-      /** Job Id */
-      job_id?: string | null
-      /**
-       * Occurred At
-       * Format: date-time
-       */
-      occurred_at: string
-      /** Progress Percent */
-      progress_percent: number
-      status?: components['schemas']['CampaignStatus'] | null
-      step?: components['schemas']['WorkflowStep'] | null
-    }
-    /**
-     * CampaignEventType
-     * @enum {string}
-     */
-    CampaignEventType:
-      | 'CAMPAIGN_CREATED'
-      | 'JOB_QUEUED'
-      | 'STATUS_CHANGED'
-      | 'STEP_STARTED'
-      | 'STEP_COMPLETED'
-      | 'STEP_REUSED'
-      | 'RETRY_SCHEDULED'
-      | 'PROVIDER_CALL_STARTED'
-      | 'PROVIDER_CALL_COMPLETED'
-      | 'PROVIDER_FALLBACK_USED'
-      | 'REVIEW_READY'
-      | 'REVISION_REQUESTED'
-      | 'APPROVED'
-      | 'FINALIZED'
-      | 'CANCEL_REQUESTED'
-      | 'CANCELLED'
-      | 'FAILED'
-      | 'LATE_PROVIDER_RESULT_DISCARDED'
-    /** CampaignEventsResponse */
-    CampaignEventsResponse: {
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /** Items */
-      items: components['schemas']['CampaignEvent'][]
-      /** Latest Sequence */
-      latest_sequence: number
-      /** Next Cursor */
-      next_cursor?: string | null
-      /** Terminal */
-      terminal: boolean
-    }
-    /** CampaignListResponse */
-    CampaignListResponse: {
-      /** Items */
-      items: components['schemas']['CampaignSummary'][]
-      /** Next Cursor */
-      next_cursor?: string | null
-    }
-    /**
-     * CampaignStatus
-     * @enum {string}
-     */
-    CampaignStatus:
-      | 'CREATED'
-      | 'QUEUED'
-      | 'GENERATING_STRATEGY'
-      | 'GENERATING_COPY'
-      | 'GENERATING_STORYBOARD'
-      | 'GENERATING_IMAGES'
-      | 'RENDERING_VIDEO'
-      | 'READY_FOR_REVIEW'
-      | 'REVISION_REQUESTED'
-      | 'APPROVED'
-      | 'FINAL'
-      | 'FAILED'
-      | 'CANCELLED'
-    /** CampaignSummary */
-    CampaignSummary: {
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string
-      current_step?: components['schemas']['WorkflowStep'] | null
-      /** Current Version */
-      current_version: number
-      /** Latest Final Version */
-      latest_final_version?: number | null
-      /** Progress Percent */
-      progress_percent: number
-      status: components['schemas']['CampaignStatus']
-      /** Title */
-      title: string
-      /**
-       * Updated At
-       * Format: date-time
-       */
-      updated_at: string
-    }
-    /** CancellationRequest */
-    CancellationRequest: {
-      /** Reason */
-      reason: string
-    }
-    /** CancellationResponse */
-    CancellationResponse: {
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /**
-       * Cancellation Pending
-       * @default false
-       */
-      cancellation_pending: boolean
-      status: components['schemas']['CampaignStatus']
-    }
-    /** ChannelCopy */
-    ChannelCopy: {
-      /** Call To Action */
-      call_to_action: string
-      /** Caption */
-      caption: string
-      /** Channel */
-      channel: string
-      /** Hashtags */
-      hashtags: string[]
-      /** Headline */
-      headline: string
-    }
-    /** ConflictError */
-    ConflictError: {
-      error: components['schemas']['SanitizedWorkflowError']
-    }
-    /**
-     * ErrorComponent
-     * @enum {string}
-     */
-    ErrorComponent:
-      | 'FASTAPI'
-      | 'LANGGRAPH_WORKER'
-      | 'MARKETING_MCP'
-      | 'IMAGE_MCP'
-      | 'HYPERFRAMES_MCP'
-      | 'BEDROCK'
-      | 'DYNAMODB'
-      | 'S3'
-      | 'SQS'
-      | 'PACKAGER'
-      | 'UNKNOWN'
-    /** HealthResponse */
-    HealthResponse: {
-      /** Environment */
-      environment: string
-      /** Service */
-      service: string
-      /** Status */
-      status: string
-    }
-    /** NormalizedCampaignBrief */
-    NormalizedCampaignBrief: {
-      /** Brand Colors */
-      brand_colors?: string[]
-      /** Business Description */
-      business_description: string
-      /** Business Name */
-      business_name: string
-      /** Call To Action */
-      call_to_action?: string | null
-      /** Campaign Goal */
-      campaign_goal: string
-      /** Key Message */
-      key_message?: string | null
-      /** Language */
-      language: string
-      /** Platforms */
-      platforms: string[]
-      /** Product Or Service */
-      product_or_service: string
-      /** Reference Artifact Id */
-      reference_artifact_id?: string | null
-      /** Target Audience */
-      target_audience?: string | null
-      /** Tone */
-      tone: string
-    }
-    /** NotFoundError */
-    NotFoundError: {
-      error: components['schemas']['SanitizedWorkflowError']
-    }
-    /** ProviderStatus */
-    ProviderStatus: {
-      /** Category */
-      category: string
-      /** Http Status */
-      http_status?: number | null
-      /** Provider */
-      provider: string
-      /** Provider Code */
-      provider_code?: string | null
-    }
-    /** PublicArtifactReference */
-    PublicArtifactReference: {
-      /**
-       * Artifact Id
-       * Format: uuid
-       */
-      artifact_id: string
-      artifact_type: components['schemas']['ArtifactType']
-      attribution?: components['schemas']['ArtifactAttribution'] | null
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /** Checksum Sha256 */
-      checksum_sha256: string
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string
-      /** Download Url */
-      download_url?: string | null
-      /** Download Url Expires At */
-      download_url_expires_at?: string | null
-      /** Mime Type */
-      mime_type: string
-      /** Provider */
-      provider?: string | null
-      /** Scene Number */
-      scene_number?: number | null
-      /** Size Bytes */
-      size_bytes: number
-      workflow_step: components['schemas']['WorkflowStep']
-    }
-    /** RetryRequest */
-    RetryRequest: Record<string, never>
-    /** RetryResponse */
-    RetryResponse: {
-      /** Attempt */
-      attempt: number
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      /**
-       * Job Id
-       * Format: uuid
-       */
-      job_id: string
-      resume_step: components['schemas']['WorkflowStep']
-      status: components['schemas']['CampaignStatus']
-    }
-    /** RevisionFeedback */
-    RevisionFeedback: {
-      /** Affected Artifact Ids */
-      affected_artifact_ids?: string[]
-      earliest_affected_step: components['schemas']['WorkflowStep']
-      /** Parent Version */
-      parent_version: number
-      /** Reason */
-      reason: string
-      scope: components['schemas']['RevisionTarget']
-    }
-    /** RevisionRequest */
-    RevisionRequest: {
-      /** Affected Artifact Ids */
-      affected_artifact_ids?: string[]
-      /** Reason */
-      reason: string
-      scope: components['schemas']['RevisionTarget']
-    }
-    /** RevisionResponse */
-    RevisionResponse: {
-      /**
-       * Campaign Id
-       * Format: uuid
-       */
-      campaign_id: string
-      /** Campaign Version */
-      campaign_version: number
-      earliest_affected_step: components['schemas']['WorkflowStep']
-      /**
-       * Job Id
-       * Format: uuid
-       */
-      job_id: string
-      /** Parent Version */
-      parent_version: number
-      status: components['schemas']['CampaignStatus']
-    }
-    /**
-     * RevisionTarget
-     * @enum {string}
-     */
-    RevisionTarget: 'STRATEGY' | 'COPY' | 'STORYBOARD' | 'SELECTED_IMAGES' | 'VIDEO'
-    /** SanitizedWorkflowError */
-    SanitizedWorkflowError: {
-      /** Attempt */
-      attempt: number
-      /** Campaign Id */
-      campaign_id?: string | null
-      /** Campaign Version */
-      campaign_version?: number | null
-      /** Code */
-      code: string
-      component: components['schemas']['ErrorComponent']
-      /**
-       * Correlation Id
-       * Format: uuid
-       */
-      correlation_id: string
-      /** Job Id */
-      job_id?: string | null
-      /** Message */
-      message: string
-      provider_status?: components['schemas']['ProviderStatus'] | null
-      /** Retryable */
-      retryable: boolean
-      /**
-       * Schema Version
-       * @default 1
-       */
-      schema_version: number
-      /**
-       * Timestamp
-       * Format: date-time
-       */
-      timestamp: string
-      workflow_step?: components['schemas']['WorkflowStep'] | null
-    }
-    /** StandardValidationError */
-    StandardValidationError: {
-      error: components['schemas']['SanitizedWorkflowError']
-    }
-    /** Storyboard */
-    Storyboard: {
-      /** Scenes */
-      scenes: components['schemas']['StoryboardScene'][]
-      /** Total Duration Seconds */
-      total_duration_seconds: number
-    }
-    /** StoryboardScene */
-    StoryboardScene: {
-      /** Duration Seconds */
-      duration_seconds: number
-      /** Narration */
-      narration: string
-      /** Purpose */
-      purpose: string
-      /** Scene Number */
-      scene_number: number
-      /**
-       * Text Overlay
-       * @default
-       */
-      text_overlay: string
-      /** Transition */
-      transition: string
-      /** Visual Prompt */
-      visual_prompt: string
-    }
-    /** StrategyOutput */
-    StrategyOutput: {
-      /** Audience */
-      audience: string
-      /** Channel Rationale */
-      channel_rationale: {
-        [key: string]: string
-      }
-      /** Key Message */
-      key_message: string
-      /** Objective */
-      objective: string
-      /** Positioning */
-      positioning: string
-    }
-    /**
-     * WorkflowStep
-     * @enum {string}
-     */
-    WorkflowStep: 'strategy' | 'copy' | 'storyboard' | 'images' | 'voiceover' | 'video' | 'package'
-  }
-  responses: never
-  parameters: never
-  requestBodies: never
-  headers: never
-  pathItems: never
+    schemas: {
+        /**
+         * Actor
+         * @enum {string}
+         */
+        Actor: "FASTAPI" | "LANGGRAPH_WORKER" | "DEMO_USER" | "SYSTEM";
+        /** ApprovalRecord */
+        ApprovalRecord: {
+            /**
+             * Actor
+             * @default DEMO_USER
+             */
+            actor: string;
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /**
+             * Approved At
+             * Format: date-time
+             */
+            approved_at: string;
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Decision
+             * @default APPROVED
+             */
+            decision: string;
+            /**
+             * Lock Version
+             * @default 1
+             */
+            lock_version: number;
+            /** Manifest Checksum */
+            manifest_checksum: string;
+            /** Note */
+            note?: string | null;
+        };
+        /** ApprovalRequest */
+        ApprovalRequest: {
+            /** Note */
+            note?: string | null;
+            /** Review Manifest Checksum */
+            review_manifest_checksum: string;
+        };
+        /** ApprovalResponse */
+        ApprovalResponse: {
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            status: components["schemas"]["CampaignStatus"];
+        };
+        /** ArtifactAttribution */
+        ArtifactAttribution: {
+            /** Attribution Text */
+            attribution_text: string;
+            /** Creator Name */
+            creator_name: string;
+            /**
+             * Creator Profile Url
+             * Format: uri
+             */
+            creator_profile_url: string;
+            /** Provider Asset Id */
+            provider_asset_id: string;
+            /**
+             * Provider Url
+             * Format: uri
+             */
+            provider_url: string;
+            /**
+             * Source Page Url
+             * Format: uri
+             */
+            source_page_url: string;
+        };
+        /**
+         * ArtifactType
+         * @enum {string}
+         */
+        ArtifactType: "REFERENCE_IMAGE" | "IMAGE" | "AUDIO" | "VIDEO" | "STORYBOARD" | "MANIFEST" | "REVIEW_PACKAGE" | "FINAL_PACKAGE" | "PROVIDER_DIAGNOSTIC";
+        /** CampaignArtifactsResponse */
+        CampaignArtifactsResponse: {
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /** Items */
+            items: components["schemas"]["PublicArtifactReference"][];
+        };
+        /** CampaignCopy */
+        CampaignCopy: {
+            /** Call To Action */
+            call_to_action: string;
+            /** Caption */
+            caption: string;
+            /** Channel Variants */
+            channel_variants: components["schemas"]["ChannelCopy"][];
+            /** Hashtags */
+            hashtags: string[];
+            /** Headline */
+            headline: string;
+        };
+        /** CampaignCreationAcceptedResponse */
+        CampaignCreationAcceptedResponse: {
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Links */
+            links: {
+                [key: string]: string;
+            };
+            /** Progress Percent */
+            progress_percent: number;
+            status: components["schemas"]["CampaignStatus"];
+        };
+        /** CampaignCreationRequest */
+        CampaignCreationRequest: {
+            /** Brand Colors */
+            brand_colors?: string[];
+            /** Business Description */
+            business_description: string;
+            /** Business Name */
+            business_name: string;
+            /** Call To Action */
+            call_to_action?: string | null;
+            /** Campaign Goal */
+            campaign_goal: string;
+            /** Key Message */
+            key_message?: string | null;
+            /** Language */
+            language: string;
+            /** Platforms */
+            platforms: string[];
+            /** Product Or Service */
+            product_or_service: string;
+            /** Reference Artifact Id */
+            reference_artifact_id?: string | null;
+            /** Target Audience */
+            target_audience?: string | null;
+            /** Tone */
+            tone: string;
+            /** @default VOICEOVER_AD */
+            video_style: components["schemas"]["VideoStyle"];
+        };
+        /** CampaignDetailResponse */
+        CampaignDetailResponse: {
+            /** Actions */
+            actions?: {
+                [key: string]: string;
+            };
+            approval?: components["schemas"]["ApprovalRecord"] | null;
+            /** Artifacts */
+            artifacts?: components["schemas"]["PublicArtifactReference"][];
+            brief: components["schemas"]["NormalizedCampaignBrief"];
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /** Cancellation Reason */
+            cancellation_reason?: string | null;
+            /** Cancelled At */
+            cancelled_at?: string | null;
+            /** Completed Steps */
+            completed_steps?: components["schemas"]["WorkflowStep"][];
+            copy?: components["schemas"]["CampaignCopy"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            current_step?: components["schemas"]["WorkflowStep"] | null;
+            /** Current Version */
+            current_version: number;
+            error?: components["schemas"]["SanitizedWorkflowError"] | null;
+            /** Event Sequence */
+            event_sequence: number;
+            /** Latest Final Version */
+            latest_final_version?: number | null;
+            /** Progress Percent */
+            progress_percent: number;
+            /** Retry Eligible */
+            retry_eligible: boolean;
+            /** Review Manifest Checksum */
+            review_manifest_checksum?: string | null;
+            revision?: components["schemas"]["RevisionFeedback"] | null;
+            status: components["schemas"]["CampaignStatus"];
+            storyboard?: components["schemas"]["Storyboard"] | null;
+            strategy?: components["schemas"]["StrategyOutput"] | null;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** CampaignEvent */
+        CampaignEvent: {
+            actor: components["schemas"]["Actor"];
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /**
+             * Correlation Id
+             * Format: uuid
+             */
+            correlation_id: string;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /** Event Sequence */
+            event_sequence: number;
+            event_type: components["schemas"]["CampaignEventType"];
+            /** Job Id */
+            job_id?: string | null;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Progress Percent */
+            progress_percent: number;
+            status?: components["schemas"]["CampaignStatus"] | null;
+            step?: components["schemas"]["WorkflowStep"] | null;
+        };
+        /**
+         * CampaignEventType
+         * @enum {string}
+         */
+        CampaignEventType: "CAMPAIGN_CREATED" | "JOB_QUEUED" | "STATUS_CHANGED" | "STEP_STARTED" | "STEP_COMPLETED" | "STEP_REUSED" | "STEP_SKIPPED" | "RETRY_SCHEDULED" | "PROVIDER_CALL_STARTED" | "PROVIDER_CALL_COMPLETED" | "PROVIDER_FALLBACK_USED" | "REVIEW_READY" | "REVISION_REQUESTED" | "APPROVED" | "FINALIZED" | "CANCEL_REQUESTED" | "CANCELLED" | "FAILED" | "LATE_PROVIDER_RESULT_DISCARDED";
+        /** CampaignEventsResponse */
+        CampaignEventsResponse: {
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /** Items */
+            items: components["schemas"]["CampaignEvent"][];
+            /** Latest Sequence */
+            latest_sequence: number;
+            /** Next Cursor */
+            next_cursor?: string | null;
+            /** Terminal */
+            terminal: boolean;
+        };
+        /** CampaignListResponse */
+        CampaignListResponse: {
+            /** Items */
+            items: components["schemas"]["CampaignSummary"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
+        /**
+         * CampaignStatus
+         * @enum {string}
+         */
+        CampaignStatus: "CREATED" | "QUEUED" | "GENERATING_STRATEGY" | "GENERATING_COPY" | "GENERATING_STORYBOARD" | "GENERATING_IMAGES" | "RENDERING_VIDEO" | "READY_FOR_REVIEW" | "REVISION_REQUESTED" | "APPROVED" | "FINAL" | "FAILED" | "CANCELLED";
+        /** CampaignSummary */
+        CampaignSummary: {
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            current_step?: components["schemas"]["WorkflowStep"] | null;
+            /** Current Version */
+            current_version: number;
+            /** Latest Final Version */
+            latest_final_version?: number | null;
+            /** Progress Percent */
+            progress_percent: number;
+            status: components["schemas"]["CampaignStatus"];
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** CancellationRequest */
+        CancellationRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /** CancellationResponse */
+        CancellationResponse: {
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /**
+             * Cancellation Pending
+             * @default false
+             */
+            cancellation_pending: boolean;
+            status: components["schemas"]["CampaignStatus"];
+        };
+        /** ChannelCopy */
+        ChannelCopy: {
+            /** Call To Action */
+            call_to_action: string;
+            /** Caption */
+            caption: string;
+            /** Channel */
+            channel: string;
+            /** Hashtags */
+            hashtags: string[];
+            /** Headline */
+            headline: string;
+        };
+        /** ConflictError */
+        ConflictError: {
+            error: components["schemas"]["SanitizedWorkflowError"];
+        };
+        /**
+         * ErrorComponent
+         * @enum {string}
+         */
+        ErrorComponent: "FASTAPI" | "LANGGRAPH_WORKER" | "MARKETING_MCP" | "IMAGE_MCP" | "HYPERFRAMES_MCP" | "BEDROCK" | "DYNAMODB" | "S3" | "SQS" | "PACKAGER" | "UNKNOWN";
+        /** HealthResponse */
+        HealthResponse: {
+            /** Environment */
+            environment: string;
+            /** Service */
+            service: string;
+            /** Status */
+            status: string;
+        };
+        /** NormalizedCampaignBrief */
+        NormalizedCampaignBrief: {
+            /** Brand Colors */
+            brand_colors?: string[];
+            /** Business Description */
+            business_description: string;
+            /** Business Name */
+            business_name: string;
+            /** Call To Action */
+            call_to_action?: string | null;
+            /** Campaign Goal */
+            campaign_goal: string;
+            /** Key Message */
+            key_message?: string | null;
+            /** Language */
+            language: string;
+            /** Platforms */
+            platforms: string[];
+            /** Product Or Service */
+            product_or_service: string;
+            /** Reference Artifact Id */
+            reference_artifact_id?: string | null;
+            /** Target Audience */
+            target_audience?: string | null;
+            /** Tone */
+            tone: string;
+            /** @default VOICEOVER_AD */
+            video_style: components["schemas"]["VideoStyle"];
+        };
+        /** NotFoundError */
+        NotFoundError: {
+            error: components["schemas"]["SanitizedWorkflowError"];
+        };
+        /** ProviderStatus */
+        ProviderStatus: {
+            /** Category */
+            category: string;
+            /** Http Status */
+            http_status?: number | null;
+            /** Provider */
+            provider: string;
+            /** Provider Code */
+            provider_code?: string | null;
+        };
+        /** PublicArtifactReference */
+        PublicArtifactReference: {
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            artifact_id: string;
+            artifact_type: components["schemas"]["ArtifactType"];
+            attribution?: components["schemas"]["ArtifactAttribution"] | null;
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /** Checksum Sha256 */
+            checksum_sha256: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Download Url */
+            download_url?: string | null;
+            /** Download Url Expires At */
+            download_url_expires_at?: string | null;
+            /** Mime Type */
+            mime_type: string;
+            /** Provider */
+            provider?: string | null;
+            /** Scene Number */
+            scene_number?: number | null;
+            /** Size Bytes */
+            size_bytes: number;
+            workflow_step: components["schemas"]["WorkflowStep"];
+        };
+        /** RetryRequest */
+        RetryRequest: Record<string, never>;
+        /** RetryResponse */
+        RetryResponse: {
+            /** Attempt */
+            attempt: number;
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            resume_step: components["schemas"]["WorkflowStep"];
+            status: components["schemas"]["CampaignStatus"];
+        };
+        /** RevisionFeedback */
+        RevisionFeedback: {
+            /** Affected Artifact Ids */
+            affected_artifact_ids?: string[];
+            earliest_affected_step: components["schemas"]["WorkflowStep"];
+            /** Parent Version */
+            parent_version: number;
+            /** Reason */
+            reason: string;
+            scope: components["schemas"]["RevisionTarget"];
+        };
+        /** RevisionRequest */
+        RevisionRequest: {
+            /** Affected Artifact Ids */
+            affected_artifact_ids?: string[];
+            /** Reason */
+            reason: string;
+            scope: components["schemas"]["RevisionTarget"];
+        };
+        /** RevisionResponse */
+        RevisionResponse: {
+            /**
+             * Campaign Id
+             * Format: uuid
+             */
+            campaign_id: string;
+            /** Campaign Version */
+            campaign_version: number;
+            earliest_affected_step: components["schemas"]["WorkflowStep"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Parent Version */
+            parent_version: number;
+            status: components["schemas"]["CampaignStatus"];
+        };
+        /**
+         * RevisionTarget
+         * @enum {string}
+         */
+        RevisionTarget: "STRATEGY" | "COPY" | "STORYBOARD" | "SELECTED_IMAGES" | "VIDEO";
+        /** SanitizedWorkflowError */
+        SanitizedWorkflowError: {
+            /** Attempt */
+            attempt: number;
+            /** Campaign Id */
+            campaign_id?: string | null;
+            /** Campaign Version */
+            campaign_version?: number | null;
+            /** Code */
+            code: string;
+            component: components["schemas"]["ErrorComponent"];
+            /**
+             * Correlation Id
+             * Format: uuid
+             */
+            correlation_id: string;
+            /** Job Id */
+            job_id?: string | null;
+            /** Message */
+            message: string;
+            provider_status?: components["schemas"]["ProviderStatus"] | null;
+            /** Retryable */
+            retryable: boolean;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            workflow_step?: components["schemas"]["WorkflowStep"] | null;
+        };
+        /** StandardValidationError */
+        StandardValidationError: {
+            error: components["schemas"]["SanitizedWorkflowError"];
+        };
+        /** Storyboard */
+        Storyboard: {
+            /** Scenes */
+            scenes: components["schemas"]["StoryboardScene"][];
+            /** Total Duration Seconds */
+            total_duration_seconds: number;
+        };
+        /** StoryboardScene */
+        StoryboardScene: {
+            /** Duration Seconds */
+            duration_seconds: number;
+            /** Narration */
+            narration: string;
+            /** Purpose */
+            purpose: string;
+            /** Scene Number */
+            scene_number: number;
+            /**
+             * Text Overlay
+             * @default
+             */
+            text_overlay: string;
+            /** Transition */
+            transition: string;
+            /** Visual Prompt */
+            visual_prompt: string;
+        };
+        /** StrategyOutput */
+        StrategyOutput: {
+            /** Audience */
+            audience: string;
+            /** Channel Rationale */
+            channel_rationale: {
+                [key: string]: string;
+            };
+            /** Key Message */
+            key_message: string;
+            /** Objective */
+            objective: string;
+            /** Positioning */
+            positioning: string;
+        };
+        /**
+         * VideoStyle
+         * @enum {string}
+         */
+        VideoStyle: "VOICEOVER_AD" | "CINEMATIC_TEXT_AD" | "MUSIC_FIRST_REEL";
+        /**
+         * WorkflowStep
+         * @enum {string}
+         */
+        WorkflowStep: "strategy" | "copy" | "storyboard" | "creative_plan" | "images" | "voiceover" | "video" | "package";
+    };
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
 }
-export type $defs = Record<string, never>
+export type $defs = Record<string, never>;
 export interface operations {
-  list_campaigns_api_v1_campaigns_get: {
-    parameters: {
-      query?: {
-        offset?: number
-        limit?: number | null
-      }
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['CampaignListResponse']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  create_campaign_api_v1_campaigns_post: {
-    parameters: {
-      query?: never
-      header: {
-        'Idempotency-Key': string
-      }
-      path?: never
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CampaignCreationRequest']
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      202: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['CampaignCreationAcceptedResponse']
-        }
-      }
-      /** @description Conflict */
-      409: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['ConflictError']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-      /** @description Service Unavailable */
-      503: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  get_campaign_api_v1_campaigns__campaign_id__get: {
-    parameters: {
-      query?: never
-      header?: never
-      path: {
-        campaign_id: string
-      }
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['CampaignDetailResponse']
-        }
-      }
-      /** @description Not Found */
-      404: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['NotFoundError']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  get_campaign_artifacts_api_v1_campaigns__campaign_id__artifacts_get: {
-    parameters: {
-      query?: {
-        version?: number | null
-        type?: components['schemas']['ArtifactType'] | null
-      }
-      header?: never
-      path: {
-        campaign_id: string
-      }
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['CampaignArtifactsResponse']
-        }
-      }
-      /** @description Not Found */
-      404: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['NotFoundError']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-      /** @description Service Unavailable */
-      503: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  get_campaign_events_api_v1_campaigns__campaign_id__events_get: {
-    parameters: {
-      query?: {
-        cursor?: string | null
-        limit?: number
-      }
-      header?: never
-      path: {
-        campaign_id: string
-      }
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['CampaignEventsResponse']
-        }
-      }
-      /** @description Bad Request */
-      400: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-      /** @description Not Found */
-      404: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['NotFoundError']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post: {
-    parameters: {
-      query?: never
-      header: {
-        'Idempotency-Key': string
-      }
-      path: {
-        campaign_id: string
-        version: number
-      }
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['ApprovalRequest']
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      202: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['ApprovalResponse']
-        }
-      }
-      /** @description Not Found */
-      404: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['NotFoundError']
-        }
-      }
-      /** @description Conflict */
-      409: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['ConflictError']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-      /** @description Service Unavailable */
-      503: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  cancel_campaign_api_v1_campaigns__campaign_id__versions__version__cancel_post: {
-    parameters: {
-      query?: never
-      header: {
-        'Idempotency-Key': string
-      }
-      path: {
-        campaign_id: string
-        version: number
-      }
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CancellationRequest']
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['CancellationResponse']
-        }
-      }
-      /** @description Accepted */
-      202: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['CancellationResponse']
-        }
-      }
-      /** @description Not Found */
-      404: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['NotFoundError']
-        }
-      }
-      /** @description Conflict */
-      409: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['ConflictError']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-      /** @description Service Unavailable */
-      503: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  retry_campaign_api_v1_campaigns__campaign_id__versions__version__retry_post: {
-    parameters: {
-      query?: never
-      header: {
-        'Idempotency-Key': string
-      }
-      path: {
-        campaign_id: string
-        version: number
-      }
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['RetryRequest']
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      202: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['RetryResponse']
-        }
-      }
-      /** @description Not Found */
-      404: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['NotFoundError']
-        }
-      }
-      /** @description Conflict */
-      409: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['ConflictError']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-      /** @description Service Unavailable */
-      503: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  revise_campaign_api_v1_campaigns__campaign_id__versions__version__revisions_post: {
-    parameters: {
-      query?: never
-      header: {
-        'Idempotency-Key': string
-      }
-      path: {
-        campaign_id: string
-        version: number
-      }
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['RevisionRequest']
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      202: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['RevisionResponse']
-        }
-      }
-      /** @description Not Found */
-      404: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['NotFoundError']
-        }
-      }
-      /** @description Conflict */
-      409: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['ConflictError']
-        }
-      }
-      /** @description Unprocessable Entity */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-      /** @description Service Unavailable */
-      503: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['StandardValidationError']
-        }
-      }
-    }
-  }
-  live_health_live_get: {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['HealthResponse']
-        }
-      }
-    }
-  }
-  ready_health_ready_get: {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['HealthResponse']
-        }
-      }
-      /** @description Service Unavailable */
-      503: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          'application/json': components['schemas']['HealthResponse']
-        }
-      }
-    }
-  }
+    list_campaigns_api_v1_campaigns_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignListResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    create_campaign_api_v1_campaigns_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CampaignCreationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignCreationAcceptedResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    get_campaign_api_v1_campaigns__campaign_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignDetailResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    get_campaign_artifacts_api_v1_campaigns__campaign_id__artifacts_get: {
+        parameters: {
+            query?: {
+                version?: number | null;
+                type?: components["schemas"]["ArtifactType"] | null;
+            };
+            header?: never;
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignArtifactsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    get_campaign_events_api_v1_campaigns__campaign_id__events_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignEventsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                campaign_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    cancel_campaign_api_v1_campaigns__campaign_id__versions__version__cancel_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                campaign_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancellationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancellationResponse"];
+                };
+            };
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancellationResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    retry_campaign_api_v1_campaigns__campaign_id__versions__version__retry_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                campaign_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    revise_campaign_api_v1_campaigns__campaign_id__versions__version__revisions_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                campaign_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevisionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardValidationError"];
+                };
+            };
+        };
+    };
+    live_health_live_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    ready_health_ready_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
 }

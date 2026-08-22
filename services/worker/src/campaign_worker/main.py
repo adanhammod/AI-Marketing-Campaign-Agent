@@ -157,6 +157,9 @@ def build_consumer(
             ),
             voice_id=settings.polly_voice_id,
             engine=settings.polly_engine,
+            ffmpeg_path=settings.ffmpeg_path,
+            ffprobe_path=settings.ffprobe_path,
+            duration_check_timeout_seconds=settings.audio_normalize_timeout_seconds,
         )
         video_provider: VideoProvider | VideoAssetPipeline
         try:
