@@ -211,37 +211,6 @@ export interface components {
             /** Note */
             note?: string | null;
         };
-<<<<<<< HEAD
-=======
-        /** ApprovalRequest */
-        ApprovalRequest: {
-            /** Note */
-            note?: string | null;
-            /** Review Manifest Checksum */
-            review_manifest_checksum: string;
-        };
-        /** ApprovalResponse */
-        ApprovalResponse: {
-            /**
-             * Approval Id
-             * Format: uuid
-             */
-            approval_id: string;
-            /**
-             * Campaign Id
-             * Format: uuid
-             */
-            campaign_id: string;
-            /** Campaign Version */
-            campaign_version: number;
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            status: components["schemas"]["CampaignStatus"];
-        };
->>>>>>> f06fc68 (fix(worker): handle voiceover duration before video render)
         /** ArtifactAttribution */
         ArtifactAttribution: {
             /** Attribution Text */
@@ -1030,74 +999,6 @@ export interface operations {
             };
         };
     };
-<<<<<<< HEAD
-=======
-    approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                campaign_id: string;
-                version: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApprovalRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApprovalResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NotFoundError"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConflictError"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StandardValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StandardValidationError"];
-                };
-            };
-        };
-    };
->>>>>>> f06fc68 (fix(worker): handle voiceover duration before video render)
     cancel_campaign_api_v1_campaigns__campaign_id__versions__version__cancel_post: {
         parameters: {
             query?: never;
