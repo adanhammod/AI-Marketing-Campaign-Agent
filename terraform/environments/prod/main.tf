@@ -6,8 +6,10 @@ variable "artifact_bucket_name" {
   type = string
 }
 variable "worker_role_name" {
-  description = "Shared Kubernetes worker IAM role created by the cluster environment."
+  description = "Shared Kubernetes worker IAM role created by the cluster environment. Optional override — leave unset to derive it automatically from the cluster environment's Terraform state."
   type        = string
+  default     = null
+  nullable    = true
 }
 module "runtime" {
   source               = "../../modules/runtime"
