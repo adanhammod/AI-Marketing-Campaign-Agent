@@ -31,8 +31,8 @@ from .providers.mock_image_provider import MockImageProvider
 from .providers.mock_package_pipeline import MockPackagePipeline
 from .providers.mock_video_provider import MockVideoProvider
 from .providers.mock_voice_provider import MockVoiceProvider
+from .providers.cloudflare_flux_client import CloudflareFluxClient
 from .providers.pexels_client import PexelsPhotoClient
-from .providers.stability_client import StabilityImageClient
 from .repositories.dynamodb_workflow_repository import DynamoDBWorkflowRepository
 from .services.job_processor import GraphJobProcessor
 from .storage.s3_artifact_store import S3ArtifactStore
@@ -95,7 +95,7 @@ def build_consumer(
     if (
         settings.artifact_bucket
         and settings.bedrock_image_query_model_id
-        and (settings.pexels_api_key or settings.stability_api_key)
+        and (settings.pexels_api_key or (settings.cloudflare_account_id and settings.cloudflare_api_token))
     ):
         settings.validate_image_pipeline()
         settings.validate_voice_pipeline()
@@ -123,28 +123,29 @@ def build_consumer(
             assert stock_pipeline is not None  # guaranteed by validate_image_pipeline()
             image_pipeline = stock_pipeline
         else:
-            # Stability generation takes materially longer than a Pexels
-            # search/download, so it gets its own client with a longer
-            # timeout rather than sharing the short-timeout Pexels client.
-            stability_http = httpx.AsyncClient(
-                timeout=httpx.Timeout(settings.stability_http_timeout_seconds), follow_redirects=True
+            # FLUX-schnell generation gets its own client rather than sharing
+            # the short-timeout Pexels client, matching this module's
+            # per-provider-client convention (previously used for Stability).
+            cloudflare_http = httpx.AsyncClient(
+                timeout=httpx.Timeout(settings.cloudflare_http_timeout_seconds), follow_redirects=True
             )
-            assert settings.stability_api_key is not None  # guaranteed by validate_image_pipeline()
+            assert settings.cloudflare_account_id is not None  # guaranteed by validate_image_pipeline()
+            assert settings.cloudflare_api_token is not None  # guaranteed by validate_image_pipeline()
             image_pipeline = GenerativeImagePipeline(
-                StabilityImageClient(
-                    settings.stability_api_key,
-                    stability_http,
-                    model=settings.stability_image_model,
-                    aspect_ratio=settings.stability_image_aspect_ratio,
-                    output_format=settings.stability_image_output_format,
+                CloudflareFluxClient(
+                    settings.cloudflare_account_id,
+                    settings.cloudflare_api_token,
+                    cloudflare_http,
+                    model=settings.cloudflare_flux_model,
+                    steps=settings.cloudflare_flux_steps,
                     max_download_bytes=settings.image_max_download_bytes,
                 ),
                 stock_pipeline if settings.image_pexels_fallback_enabled else None,
                 ImageProcessor(settings.image_max_download_bytes),
                 artifact_store,
-                model=settings.stability_image_model,
-                aspect_ratio=settings.stability_image_aspect_ratio,
-                output_format=settings.stability_image_output_format,
+                model=settings.cloudflare_flux_model,
+                aspect_ratio=settings.cloudflare_flux_aspect_ratio,
+                output_format="jpeg",
             )
 
         voice_pipeline = PollyVoicePipeline(

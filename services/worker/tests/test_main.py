@@ -34,7 +34,8 @@ def _settings(**overrides):
         artifact_bucket="campaign-artifacts",
         pexels_api_key="test-key",
         bedrock_image_query_model_id="test-model",
-        stability_api_key="test-stability-key",
+        cloudflare_account_id="test-account-id",
+        cloudflare_api_token="test-cloudflare-token",
         # sys.executable is guaranteed to exist and be executable in any test
         # environment, standing in for a real ffmpeg/ffprobe binary purely
         # for availability detection. The voice pipeline now hard-requires
@@ -270,7 +271,7 @@ def test_build_consumer_wires_bedrock_creative_plan_provider_with_fallback_when_
 
 
 def test_build_consumer_wires_creative_plan_provider_even_in_all_mock_branch():
-    # bedrock_image_query_model_id/pexels/stability all unset -> the big
+    # bedrock_image_query_model_id/pexels/cloudflare all unset -> the big
     # if/else in build_consumer takes the all-mock branch for image/voice/
     # video, but creative-plan generation is an independent gate.
     consumer = build_consumer(
@@ -332,8 +333,8 @@ def test_build_consumer_defaults_image_provider_mode_to_generative_and_wires_gen
     assert isinstance(consumer._processor._image_provider, GenerativeImagePipeline)
 
 
-def test_build_consumer_in_stock_mode_wires_stock_pipeline_only_and_never_constructs_stability_client():
-    settings = _settings(image_provider_mode="stock", stability_api_key=None)
+def test_build_consumer_in_stock_mode_wires_stock_pipeline_only_and_never_constructs_cloudflare_client():
+    settings = _settings(image_provider_mode="stock", cloudflare_account_id=None, cloudflare_api_token=None)
     consumer = build_consumer(
         settings,
         sqs_client=object(),
@@ -345,8 +346,8 @@ def test_build_consumer_in_stock_mode_wires_stock_pipeline_only_and_never_constr
     assert isinstance(consumer._processor._image_provider, StockImagePipeline)
 
 
-def test_build_consumer_raises_configuration_error_when_generative_mode_missing_stability_key():
-    settings = _settings(stability_api_key=None)
+def test_build_consumer_raises_configuration_error_when_generative_mode_missing_cloudflare_credentials():
+    settings = _settings(cloudflare_account_id=None, cloudflare_api_token=None)
     with pytest.raises(ConfigurationError):
         build_consumer(
             settings,
