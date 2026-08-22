@@ -3,8 +3,16 @@
 No Secret manifest is committed. Create campaign-secrets separately in each
 namespace with SQS_QUEUE_URL, DYNAMODB_TABLE_NAME,
 CAMPAIGN_ARTIFACT_BUCKET, BEDROCK_IMAGE_QUERY_MODEL_ID, PEXELS_API_KEY,
-and STABILITY_API_KEY. Values should come from a secret manager or a
-deployment-time encrypted secret workflow, never Git.
+CLOUDFLARE_ACCOUNT_ID, and CLOUDFLARE_API_TOKEN. Values should come from a
+secret manager or a deployment-time encrypted secret workflow, never Git.
+
+CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN are the active generative image
+provider's credentials (Cloudflare Workers AI, FLUX). The API token needs
+the "Workers AI Read/Edit" account permission. STABILITY_API_KEY is no
+longer required for the worker to run generative mode -- it is kept as an
+optional secret only if you intend to roll back to the Stability client,
+which remains in the codebase unused (see
+`services/worker/src/campaign_worker/providers/stability_client.py`).
 
 AWS credentials are not Kubernetes secrets in this design: pods use the EC2
 worker node instance profile. This is acceptable for the single-node kubeadm

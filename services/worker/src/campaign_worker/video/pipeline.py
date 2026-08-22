@@ -192,6 +192,18 @@ class FfmpegVideoPipeline:
                     "sfx_cues_resolved": len(early_sfx_cues),
                 },
             )
+        elif audio_plan.music_optional:
+            # Best-effort background music under the voiceover: missing or
+            # unreadable music must never fail the campaign for a style
+            # whose primary content is the narration.
+            try:
+                resolved_music = resolve_music_asset(version, configured_path=self._music_path)
+            except OSError:
+                _LOG.warning(
+                    "optional_music_unavailable",
+                    extra={"campaign_id": str(version.campaign_id), "video_style": version.brief.video_style.value},
+                )
+                resolved_music = None
 
         sfx_checksums = [
             (cue.path.name, hashlib.sha256(cue.path.read_bytes()).hexdigest()) for cue in early_sfx_cues

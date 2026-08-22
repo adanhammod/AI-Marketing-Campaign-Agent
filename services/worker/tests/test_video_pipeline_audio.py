@@ -321,11 +321,8 @@ async def test_missing_optional_sfx_asset_is_skipped_and_render_still_succeeds(t
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_voiceover_ad_never_receives_sfx_or_music():
+def _voiceover_ad_version_with_voice_artifact() -> CampaignVersion:
     version = _version(video_style=VideoStyle.VOICEOVER_AD, with_plan=True)
-    version = version.model_copy(update={"voice_artifact": None})
-    # VOICEOVER_AD needs a real voice artifact; simulate via S3 + storage.
     voice_artifact = AudioArtifactReference(
         artifact_id=uuid4(),
         campaign_id=version.campaign_id,
@@ -337,14 +334,20 @@ async def test_voiceover_ad_never_receives_sfx_or_music():
         created_at=datetime.now(UTC),
         provider="polly",
     )
-    version = version.model_copy(update={"voice_artifact": voice_artifact})
+    return version.model_copy(update={"voice_artifact": voice_artifact})
+
+
+async def _voiceover_ffprobe(ffprobe_path, file_path, *, timeout_seconds, extra_args=None):
+    if str(file_path).endswith("voiceover.mp3"):
+        return {"format": {"duration": "15.0"}, "streams": [{"codec_type": "audio", "codec_name": "aac"}]}
+    return _VALID_VIDEO_PROBE
+
+
+@pytest.mark.asyncio
+async def test_voiceover_ad_without_configured_music_never_receives_sfx_or_music():
+    version = _voiceover_ad_version_with_voice_artifact()
     s3 = _populated_s3(version)
     s3.objects[f"campaigns/{version.campaign_id}/versions/2/audio/voiceover.mp3"] = b"fake-mp3"
-
-    async def voiceover_ffprobe(ffprobe_path, file_path, *, timeout_seconds, extra_args=None):
-        if str(file_path).endswith("voiceover.mp3"):
-            return {"format": {"duration": "15.0"}, "streams": [{"codec_type": "audio", "codec_name": "aac"}]}
-        return _VALID_VIDEO_PROBE
 
     store = S3ArtifactStore(s3, "private-bucket")
     mixer = _RecordingAudioMixer()
@@ -353,7 +356,7 @@ async def test_voiceover_ad_never_receives_sfx_or_music():
         store,
         "private-bucket",
         ffmpeg_runner=_fake_ffmpeg,
-        ffprobe_runner=voiceover_ffprobe,
+        ffprobe_runner=_voiceover_ffprobe,
         render_timeout_seconds=30,
         renderer=_RecordingRenderer(),
         audio_mixer=mixer,
@@ -361,11 +364,75 @@ async def test_voiceover_ad_never_receives_sfx_or_music():
         sfx_library_root=None,
     )
 
-    await pipeline.acquire(version, _never_cancelled)
+    artifact = await pipeline.acquire(version, _never_cancelled)
 
+    # Graceful degradation: no music configured, render still succeeds voiceover-only.
+    assert artifact.workflow_step == WorkflowStep.VIDEO
     assert mixer.requests[0].music_path is None
     assert mixer.requests[0].sfx_cues == []
     assert mixer.requests[0].voiceover_path is not None
+
+
+@pytest.mark.asyncio
+async def test_voiceover_ad_with_configured_music_mixes_voiceover_and_music(tmp_path):
+    music_path = tmp_path / "music.wav"
+    music_path.write_bytes(b"fake-music")
+    version = _voiceover_ad_version_with_voice_artifact()
+    s3 = _populated_s3(version)
+    s3.objects[f"campaigns/{version.campaign_id}/versions/2/audio/voiceover.mp3"] = b"fake-mp3"
+
+    store = S3ArtifactStore(s3, "private-bucket")
+    mixer = _RecordingAudioMixer()
+    pipeline = FfmpegVideoPipeline(
+        s3,
+        store,
+        "private-bucket",
+        ffmpeg_runner=_fake_ffmpeg,
+        ffprobe_runner=_voiceover_ffprobe,
+        render_timeout_seconds=30,
+        renderer=_RecordingRenderer(),
+        audio_mixer=mixer,
+        music_path=music_path,
+        sfx_library_root=None,
+    )
+
+    artifact = await pipeline.acquire(version, _never_cancelled)
+
+    assert artifact.workflow_step == WorkflowStep.VIDEO
+    assert mixer.requests[0].voiceover_path is not None
+    assert mixer.requests[0].music_path is not None
+
+
+@pytest.mark.asyncio
+async def test_voiceover_ad_with_unreadable_configured_music_still_succeeds_voiceover_only(tmp_path, caplog):
+    music_path = tmp_path / "does-not-exist.wav"  # configured but never written
+    version = _voiceover_ad_version_with_voice_artifact()
+    s3 = _populated_s3(version)
+    s3.objects[f"campaigns/{version.campaign_id}/versions/2/audio/voiceover.mp3"] = b"fake-mp3"
+
+    store = S3ArtifactStore(s3, "private-bucket")
+    mixer = _RecordingAudioMixer()
+    pipeline = FfmpegVideoPipeline(
+        s3,
+        store,
+        "private-bucket",
+        ffmpeg_runner=_fake_ffmpeg,
+        ffprobe_runner=_voiceover_ffprobe,
+        render_timeout_seconds=30,
+        renderer=_RecordingRenderer(),
+        audio_mixer=mixer,
+        music_path=music_path,
+        sfx_library_root=None,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="campaign_worker.video.pipeline"):
+        artifact = await pipeline.acquire(version, _never_cancelled)
+
+    # Optional background music being unreadable must never fail the campaign.
+    assert artifact.workflow_step == WorkflowStep.VIDEO
+    assert mixer.requests[0].voiceover_path is not None
+    assert mixer.requests[0].music_path is None
+    assert any("optional_music_unavailable" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
