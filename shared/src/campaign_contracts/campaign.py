@@ -10,13 +10,13 @@ from .validation import UTCModel
 class NormalizedCampaignBrief(UTCModel):
     business_name:str=Field(min_length=2,max_length=120); product_or_service:str=Field(min_length=2,max_length=200); business_description:str=Field(min_length=20,max_length=2000); campaign_goal:str=Field(min_length=3,max_length=300); platforms:list[str]=Field(min_length=1,max_length=5); tone:str=Field(min_length=2,max_length=80); language:str=Field(min_length=2,max_length=20); target_audience:str|None=Field(default=None,max_length=1000); key_message:str|None=Field(default=None,max_length=500); call_to_action:str|None=Field(default=None,max_length=200); brand_colors:list[str]=Field(default_factory=list,max_length=5); reference_artifact_id:UUID|None=None; video_style:VideoStyle=VideoStyle.VOICEOVER_AD
 class CampaignConstraints(UTCModel):
-    image_count:int=Field(default=3,ge=3,le=3); scene_count:int=Field(default=3,ge=3,le=3); target_duration_seconds:int=Field(default=15,ge=15,le=15); min_duration_seconds:int=Field(default=13,ge=13,le=13); max_duration_seconds:int=Field(default=17,ge=17,le=17); aspect_ratio:str=Field(default="9:16",pattern=r"^9:16$"); preferred_resolution:str="1080x1920"; fallback_resolution:str="720x1280"; output_format:str="MP4"; video_codec:str="H.264"; audio_codec:str="AAC"
+    image_count:int=Field(default=3,ge=3,le=3); scene_count:int=Field(default=3,ge=3,le=3); target_duration_seconds:int=Field(default=15,ge=15,le=15); min_duration_seconds:int=Field(default=13,ge=13,le=13); max_duration_seconds:int=Field(default=20,ge=20,le=20); aspect_ratio:str=Field(default="9:16",pattern=r"^9:16$"); preferred_resolution:str="1080x1920"; fallback_resolution:str="720x1280"; output_format:str="MP4"; video_codec:str="H.264"; audio_codec:str="AAC"
 class StrategyOutput(UTCModel): audience:str; positioning:str; objective:str; key_message:str; channel_rationale:dict[str,str]
 class ChannelCopy(UTCModel): channel:str; headline:str; caption:str; call_to_action:str; hashtags:list[str]
 class CampaignCopy(UTCModel): headline:str; caption:str; call_to_action:str; hashtags:list[str]; channel_variants:list[ChannelCopy]
 class StoryboardScene(UTCModel): scene_number:int=Field(ge=1,le=3); purpose:str; duration_seconds:int=Field(ge=1); narration:str; text_overlay:str=""; visual_prompt:str; transition:str
 class Storyboard(UTCModel):
-    scenes:list[StoryboardScene]=Field(min_length=3,max_length=3); total_duration_seconds:int=Field(ge=13,le=17)
+    scenes:list[StoryboardScene]=Field(min_length=3,max_length=3); total_duration_seconds:int=Field(ge=13,le=20)
     @model_validator(mode="after")
     def sequence(self):
         if [s.scene_number for s in self.scenes]!=[1,2,3] or sum(s.duration_seconds for s in self.scenes)!=self.total_duration_seconds: raise ValueError("invalid scene ordering or duration")

@@ -1626,7 +1626,7 @@
             "type": "array"
           },
           "total_duration_seconds": {
-            "maximum": 17.0,
+            "maximum": 20.0,
             "minimum": 13.0,
             "title": "Total Duration Seconds",
             "type": "integer"

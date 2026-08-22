@@ -189,7 +189,7 @@ def test_campaign_version_accepts_a_populated_creative_video_plan():
 
 
 def test_campaign_version_rejects_creative_video_plan_duration_outside_constraints():
-    # CampaignConstraints() defaults to a locked 13-17s band.
+    # CampaignConstraints() defaults to a locked 13-20s band.
     with pytest.raises(ValidationError, match="constraints"):
         _campaign_version(
             creative_video_plan=_plan(

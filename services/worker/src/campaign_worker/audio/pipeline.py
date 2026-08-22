@@ -12,9 +12,11 @@ from campaign_contracts.enums import WorkflowStep
 from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.graph.boundary import NodeCancelled
 from campaign_worker.storage.artifact_store import AudioArtifactStore, StoredAudio
+from campaign_worker.video.ffmpeg_runner import run_ffmpeg, run_ffprobe
 
 from .normalizer import AudioNormalizer
 from .processor import AudioProcessor
+from .tempo_normalizer import ensure_duration_in_range
 
 MAX_NARRATION_CHARS = 3000
 
@@ -79,6 +81,11 @@ class PollyVoicePipeline:
         *,
         voice_id: str | None = None,
         engine: str = "neural",
+        ffmpeg_path: str = "ffmpeg",
+        ffprobe_path: str = "ffprobe",
+        duration_check_timeout_seconds: float = 30,
+        ffmpeg_runner: Callable[..., Awaitable[None]] = run_ffmpeg,
+        ffprobe_runner: Callable[..., Awaitable[dict[str, Any]]] = run_ffprobe,
     ) -> None:
         self._client = client
         self._store = store
@@ -86,6 +93,11 @@ class PollyVoicePipeline:
         self._normalizer = normalizer
         self._voice_id = voice_id
         self._engine = engine
+        self._ffmpeg_path = ffmpeg_path
+        self._ffprobe_path = ffprobe_path
+        self._duration_check_timeout_seconds = duration_check_timeout_seconds
+        self._ffmpeg_runner = ffmpeg_runner
+        self._ffprobe_runner = ffprobe_runner
 
     async def acquire(
         self, version: CampaignVersion, is_cancelled: Callable[[], Awaitable[bool]]
@@ -112,6 +124,29 @@ class PollyVoicePipeline:
         normalized_loudness = await self._normalizer.normalize(audio_bytes)
         await self._checkpoint(is_cancelled, "before_validation")
         normalized = self._processor.validate(normalized_loudness.data)
+
+        await self._checkpoint(is_cancelled, "before_duration_check")
+        # Measures the REAL synthesized duration and, if needed, applies a
+        # small bounded tempo correction here -- at the voiceover step, not
+        # deferred to video/pipeline.py -- so a duration problem is both
+        # caught before the (much more expensive) video render and
+        # correctly attributed to WorkflowStep.VOICEOVER via this node's
+        # existing with_failure_attribution wrapping.
+        duration_result = await ensure_duration_in_range(
+            normalized.data,
+            min_duration_seconds=version.constraints.min_duration_seconds,
+            max_duration_seconds=version.constraints.max_duration_seconds,
+            ffmpeg_path=self._ffmpeg_path,
+            ffprobe_path=self._ffprobe_path,
+            timeout_seconds=self._duration_check_timeout_seconds,
+            ffmpeg_runner=self._ffmpeg_runner,
+            ffprobe_runner=self._ffprobe_runner,
+        )
+        if duration_result.tempo_factor is not None:
+            # Tempo-shifted bytes are a new encode: re-validate/re-checksum
+            # so what's recorded/stored matches what's actually uploaded.
+            normalized = self._processor.validate(duration_result.data)
+
         await self._checkpoint(is_cancelled, "before_s3_upload")
         metadata = {
             "campaign_id": str(version.campaign_id),
@@ -129,6 +164,8 @@ class PollyVoicePipeline:
             "true_peak_ceiling_dbtp": self._normalizer.true_peak_ceiling_dbtp,
             "measured_integrated_lufs": normalized_loudness.measured_integrated_lufs,
             "measured_true_peak_dbtp": normalized_loudness.measured_true_peak_dbtp,
+            "measured_duration_seconds": duration_result.measured_duration_seconds,
+            "tempo_factor": duration_result.tempo_factor,
         }
         stored = self._store.put_audio(version, normalized, metadata)
         return self._reference(version, stored)
