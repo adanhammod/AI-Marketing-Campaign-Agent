@@ -108,7 +108,7 @@ def _voice_artifact(campaign_id, campaign_version, now):
     )
 
 
-NON_READY_FOR_REVIEW_STATUSES = [
+NON_REVISABLE_STATUSES = [
     CampaignStatus.CREATED,
     CampaignStatus.QUEUED,
     CampaignStatus.GENERATING_STRATEGY,
@@ -117,7 +117,6 @@ NON_READY_FOR_REVIEW_STATUSES = [
     CampaignStatus.GENERATING_IMAGES,
     CampaignStatus.RENDERING_VIDEO,
     CampaignStatus.APPROVED,
-    CampaignStatus.FINAL,
     CampaignStatus.FAILED,
     CampaignStatus.REVISION_REQUESTED,
     CampaignStatus.CANCELLED,
@@ -177,14 +176,63 @@ def test_revision_freezes_the_parent_version_unchanged_except_status(client, rep
     assert parent_after.lock_version == parent_before.lock_version + 1
 
 
-@pytest.mark.parametrize("status", NON_READY_FOR_REVIEW_STATUSES)
-def test_revision_from_every_non_ready_for_review_status_rejected(client, campaign_at_status, headers, status):
+@pytest.mark.parametrize("status", NON_REVISABLE_STATUSES)
+def test_revision_from_every_non_revisable_status_rejected(client, campaign_at_status, headers, status):
     campaign_id, _ = asyncio.run(campaign_at_status(status))
 
     response = _revise(client, campaign_id, 1, headers)
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "STATE_CONFLICT"
+
+
+def test_revision_from_final_returns_202_and_creates_version_2(client, repository, queue, campaign_at_status, headers):
+    """Campaigns finish automatically with no approval step, so a revision must
+    remain available from FINAL, not just the brief READY_FOR_REVIEW window."""
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.FINAL, strategy=_strategy()))
+
+    response = _revise(client, campaign_id, 1, headers, scope="COPY")
+
+    assert response.status_code == 202
+    body = RevisionResponse.model_validate(response.json())
+    assert body.parent_version == 1
+    assert body.campaign_version == 2
+    assert body.status == CampaignStatus.QUEUED
+
+    record = asyncio.run(repository.get(campaign_id))
+    assert record is not None
+    assert record[1].campaign_version == 2
+    assert record[1].parent_version == 1
+    assert record[1].status == CampaignStatus.QUEUED
+
+    messages = queue.messages()
+    assert len(messages) == 1
+    assert messages[0].operation == SQSOperation.REGENERATE
+
+
+def test_revision_from_final_leaves_the_final_version_completely_unchanged(client, repository, campaign_at_status, headers):
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.FINAL, strategy=_strategy()))
+    before = asyncio.run(repository.get_version(campaign_id, 1))
+    assert before is not None
+
+    response = _revise(client, campaign_id, 1, headers, scope="COPY")
+    assert response.status_code == 202
+
+    after = asyncio.run(repository.get_version(campaign_id, 1))
+    assert after is not None
+    # Unlike the READY_FOR_REVIEW case, a FINAL parent is immutable: not even its
+    # status/lock_version change -- it is byte-for-byte identical, proving it was
+    # never written at all (assert_version_immutable's invariant, enforced by
+    # construction rather than by an equality check on written-back content).
+    assert after.model_dump(mode="json", by_alias=True) == before.model_dump(mode="json", by_alias=True)
+    assert after.status == CampaignStatus.FINAL
+
+    # v1's own artifacts/package remain independently readable after the revision.
+    record = asyncio.run(repository.get(campaign_id))
+    assert record is not None
+    assert record[1].campaign_version == 2  # current pointer moved on...
+    v1 = asyncio.run(repository.get_version(campaign_id, 1))
+    assert v1 is not None and v1.status == CampaignStatus.FINAL  # ...but v1 is still there, untouched
 
 
 def test_revision_campaign_not_found(client, headers):
@@ -327,28 +375,6 @@ def test_revision_ambiguous_queue_failure_then_replay_succeeds(app, repository, 
     second = _revise(test_client, campaign_id, 1, headers, reason="r", scope="COPY")
     assert second.status_code == 202
     assert len(fail_once.messages()) == 1
-
-
-def test_revision_vs_approve_mutual_exclusion(client, campaign_at_status, approval_checksum, headers):
-    campaign_id, _ = asyncio.run(
-        campaign_at_status(
-            CampaignStatus.READY_FOR_REVIEW,
-            review_package=ReviewPackage(
-                artifact_id=uuid4(), manifest_checksum=approval_checksum, artifact_ids=[uuid4()]
-            ),
-        )
-    )
-    approve_response = client.post(
-        f"/api/v1/campaigns/{campaign_id}/versions/1/approve",
-        json={"review_manifest_checksum": approval_checksum, "note": None},
-        headers=headers,
-    )
-    assert approve_response.status_code == 202
-
-    revise_response = _revise(client, campaign_id, 1, headers)
-
-    assert revise_response.status_code == 409
-    assert revise_response.json()["error"]["code"] == "STATE_CONFLICT"
 
 
 def test_revision_vs_cancel_mutual_exclusion(client, campaign_at_status, headers):

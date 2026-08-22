@@ -2,8 +2,6 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4, uuid5
 
 from campaign_contracts.api import (
-    ApprovalRequest,
-    ApprovalResponse,
     CampaignArtifactsResponse,
     CampaignCreationAcceptedResponse,
     CampaignCreationRequest,
@@ -20,14 +18,12 @@ from campaign_contracts.api import (
 )
 from campaign_contracts.artifacts import PublicArtifactReference
 from campaign_contracts.campaign import (
-    ApprovalRecord,
     CampaignAggregateMetadata,
     CampaignConstraints,
     CampaignVersion,
     RetryMetadata,
     RevisionFeedback,
     earliest_regeneration_step,
-    validate_approval_target,
 )
 from campaign_contracts.enums import Actor, ArtifactType, CampaignEventType, CampaignStatus, SQSOperation, WorkflowStep
 from campaign_contracts.events import CampaignEvent
@@ -208,109 +204,6 @@ class CampaignService:
             status=CampaignStatus.QUEUED,
             progress_percent=2,
             links={"self": f"/api/v1/campaigns/{campaign_id}", "events": f"/api/v1/campaigns/{campaign_id}/events"},
-        )
-
-    async def approve(
-        self, campaign_id: UUID, campaign_version: int, request: ApprovalRequest, correlation_id: UUID
-    ) -> ApprovalResponse:
-        record = await self.repository.get(campaign_id)
-        if record is None:
-            raise CampaignNotFound("campaign not found")
-        aggregate, current = record
-        if current.campaign_version != campaign_version:
-            raise InvalidStateTransition("approval must target the current campaign version")
-
-        existing_approval = current.approval
-        approval: ApprovalRecord
-        if current.status == CampaignStatus.APPROVED and existing_approval is not None:
-            if (
-                existing_approval.manifest_checksum != request.review_manifest_checksum
-                or existing_approval.note != request.note
-            ):
-                raise DuplicateJobConflict("approval already recorded with a different request")
-            approval = existing_approval
-        else:
-            try:
-                validate_approval_target(aggregate, current)
-            except ValueError as exc:
-                raise InvalidStateTransition(str(exc)) from None
-            if (
-                current.review_package is None
-                or current.review_package.manifest_checksum != request.review_manifest_checksum
-            ):
-                raise InvalidStateTransition("review manifest checksum does not match")
-            now = datetime.now(UTC)
-            resume_job_id = uuid5(current.campaign_id, f"RESUME:{current.campaign_version}")
-            approval = ApprovalRecord(
-                approval_id=uuid4(),
-                campaign_id=current.campaign_id,
-                campaign_version=current.campaign_version,
-                approved_at=now,
-                manifest_checksum=request.review_manifest_checksum,
-                note=request.note,
-                created_at=now,
-            )
-            updated_version = current.model_copy(
-                update={
-                    "status": CampaignStatus.APPROVED,
-                    "job_id": resume_job_id,
-                    "approval": approval,
-                    "progress_percent": 98,
-                    "updated_at": now,
-                    "lock_version": current.lock_version + 1,
-                }
-            )
-            updated_aggregate = aggregate.model_copy(
-                update={
-                    "current_status": CampaignStatus.APPROVED,
-                    "current_progress": 98,
-                    "updated_at": now,
-                    "lock_version": aggregate.lock_version + 1,
-                    "event_sequence": aggregate.event_sequence + 1,
-                }
-            )
-            approved_event = CampaignEvent(
-                event_id=uuid4(),
-                campaign_id=current.campaign_id,
-                campaign_version=current.campaign_version,
-                event_sequence=aggregate.event_sequence + 1,
-                event_type=CampaignEventType.APPROVED,
-                status=CampaignStatus.APPROVED,
-                step=None,
-                progress_percent=98,
-                occurred_at=now,
-                actor=Actor.FASTAPI,
-                correlation_id=correlation_id,
-                job_id=resume_job_id,
-                details={},
-            )
-            await self.repository.approve(updated_aggregate, updated_version, approval, [approved_event])
-            current = updated_version
-
-        message = SQSJobMessage(
-            schema_version=1,
-            job_id=current.job_id,
-            campaign_id=current.campaign_id,
-            campaign_version=current.campaign_version,
-            operation=SQSOperation.RESUME,
-            requested_step=None,
-            revision_scope=None,
-            idempotency_key=str(current.job_id),
-            correlation_id=correlation_id,
-            requested_at=approval.approved_at,
-            attempt=0,
-            trace_id=correlation_id.hex,
-        )
-        result = await self.queue.submit(message)
-        if not result.accepted or result.job_id != message.job_id:
-            raise QueueSubmissionFailure("queue submission failed")
-
-        return ApprovalResponse(
-            campaign_id=current.campaign_id,
-            campaign_version=current.campaign_version,
-            approval_id=approval.approval_id,
-            status=CampaignStatus.APPROVED,
-            job_id=current.job_id,
         )
 
     async def cancel(
@@ -556,7 +449,7 @@ class CampaignService:
 
         if current.campaign_version != campaign_version:
             raise InvalidStateTransition("revision must target the current campaign version")
-        if current.status != CampaignStatus.READY_FOR_REVIEW:
+        if current.status not in (CampaignStatus.READY_FOR_REVIEW, CampaignStatus.FINAL):
             raise InvalidStateTransition("campaign is not in a revisable state")
 
         now = datetime.now(UTC)
@@ -599,12 +492,21 @@ class CampaignService:
             created_at=now,
             updated_at=now,
         )
-        frozen_parent = current.model_copy(
-            update={
-                "status": CampaignStatus.REVISION_REQUESTED,
-                "updated_at": now,
-                "lock_version": current.lock_version + 1,
-            }
+        # A FINAL parent is immutable (shared.campaign_contracts.campaign.
+        # assert_version_immutable) -- it must never be written again, so it
+        # keeps its own status/fields forever and repository.revise() is told
+        # to skip writing it (parent_version=None) rather than being rewritten
+        # to REVISION_REQUESTED the way a READY_FOR_REVIEW parent is.
+        frozen_parent = (
+            current.model_copy(
+                update={
+                    "status": CampaignStatus.REVISION_REQUESTED,
+                    "updated_at": now,
+                    "lock_version": current.lock_version + 1,
+                }
+            )
+            if current.status == CampaignStatus.READY_FOR_REVIEW
+            else None
         )
         updated_aggregate = aggregate.model_copy(
             update={

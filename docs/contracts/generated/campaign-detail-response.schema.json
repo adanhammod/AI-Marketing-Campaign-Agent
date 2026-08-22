@@ -365,6 +365,10 @@
           "minLength": 2,
           "title": "Tone",
           "type": "string"
+        },
+        "video_style": {
+          "$ref": "#/$defs/VideoStyle",
+          "default": "VOICEOVER_AD"
         }
       },
       "required": [
@@ -827,11 +831,21 @@
       "title": "StrategyOutput",
       "type": "object"
     },
+    "VideoStyle": {
+      "enum": [
+        "VOICEOVER_AD",
+        "CINEMATIC_TEXT_AD",
+        "MUSIC_FIRST_REEL"
+      ],
+      "title": "VideoStyle",
+      "type": "string"
+    },
     "WorkflowStep": {
       "enum": [
         "strategy",
         "copy",
         "storyboard",
+        "creative_plan",
         "images",
         "voiceover",
         "video",

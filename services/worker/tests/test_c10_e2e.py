@@ -328,7 +328,12 @@ def _all_mock_processor(repository: WorkflowRepository, **overrides) -> GraphJob
 
 
 @pytest.mark.asyncio
-async def test_happy_path_start_then_resume_reaches_final_with_all_expected_artifacts():
+async def test_happy_path_start_reaches_final_automatically_with_all_expected_artifacts():
+    """No human approval gate: a single START message drives the campaign all the
+    way to FINAL in one processing pass -- packaging runs automatically right
+    after READY_FOR_REVIEW instead of waiting for a separate human-triggered
+    RESUME message. READY_FOR_REVIEW is still durably saved as an intermediate
+    milestone along the way (audit trail unchanged)."""
     repository = _E2ERepository()
     processor = _all_mock_processor(repository)
     version = _version()
@@ -337,8 +342,8 @@ async def test_happy_path_start_then_resume_reaches_final_with_all_expected_arti
         _message(SQSOperation.START, version.campaign_id, version.job_id), version, _lease()
     )
     assert start_result.completed is True
-    ready = repository.save_calls[-1]
-    assert ready.status == CampaignStatus.READY_FOR_REVIEW
+
+    ready = next(v for v in repository.save_calls if v.status == CampaignStatus.READY_FOR_REVIEW)
     assert ready.strategy is not None
     assert ready.campaign_copy is not None
     assert ready.storyboard is not None
@@ -347,36 +352,24 @@ async def test_happy_path_start_then_resume_reaches_final_with_all_expected_arti
     assert ready.voice_artifact is not None
     assert ready.video_artifact is not None
     assert ready.review_package is not None
-    assert ready.review_package.manifest_checksum  # the checksum the client must echo to approve
-    assert ready.package_artifact is None  # not finalized yet
 
-    # Simulate CampaignService.approve(): status -> APPROVED, job_id rotated to the
-    # deterministic RESUME job id (exact scheme campaign_service.py uses).
-    approved = ready.model_copy(
-        update={
-            "status": CampaignStatus.APPROVED,
-            "job_id": _resume_job_id(ready.campaign_id, ready.campaign_version),
-        }
-    )
-    repository.save_calls.clear()
-    resume_result = await processor.process(
-        _message(SQSOperation.RESUME, approved.campaign_id, approved.job_id, idempotency_key="resume"),
-        approved,
-        _lease(),
-    )
-    assert resume_result.completed is True
     final = repository.save_calls[-1]
     assert final.status == CampaignStatus.FINAL
     assert final.package_artifact is not None
     assert final.package_artifact.mime_type == "application/zip"
-    # Finalization must not regenerate anything already produced during START.
-    assert final.strategy == approved.strategy
-    assert final.campaign_copy == approved.campaign_copy
-    assert final.storyboard == approved.storyboard
-    assert final.image_artifacts == approved.image_artifacts
-    assert final.voice_artifact == approved.voice_artifact
-    assert final.video_artifact == approved.video_artifact
-    assert final.review_package == approved.review_package
+    # Finalization must not regenerate anything already produced earlier in the pass.
+    assert final.strategy == ready.strategy
+    assert final.campaign_copy == ready.campaign_copy
+    assert final.storyboard == ready.storyboard
+    assert final.image_artifacts == ready.image_artifacts
+    assert final.voice_artifact == ready.voice_artifact
+    assert final.video_artifact == ready.video_artifact
+    assert final.review_package == ready.review_package
+
+    # RESUME remains a supported manual escape hatch (e.g. for a campaign that was
+    # already at READY_FOR_REVIEW/APPROVED before this behavior shipped) -- it is
+    # not removed, just no longer the only way a campaign reaches FINAL.
+    assert SQSOperation.RESUME in SQSOperation
 
 
 # ---------------------------------------------------------------------------
@@ -401,24 +394,20 @@ class _FlakyPackagePipeline:
 
 @pytest.mark.asyncio
 async def test_package_failure_then_retry_reaches_final():
+    """No human approval gate: START itself now runs packaging in the same pass,
+    so a package failure surfaces directly from the START call (not from a
+    separately-triggered RESUME). CampaignService.retry() still resubmits
+    RESUME -- not START -- whenever resume_step == PACKAGE, so the second
+    delivery below is unchanged from before."""
     repository = _E2ERepository()
     flaky_pipeline = _FlakyPackagePipeline()
     processor = _all_mock_processor(repository, package_pipeline=flaky_pipeline)
     version = _version()
 
-    await processor.process(_message(SQSOperation.START, version.campaign_id, version.job_id), version, _lease())
-    ready = repository.save_calls[-1]
-    approved = ready.model_copy(
-        update={"status": CampaignStatus.APPROVED, "job_id": _resume_job_id(ready.campaign_id, ready.campaign_version)}
+    start_result = await processor.process(
+        _message(SQSOperation.START, version.campaign_id, version.job_id), version, _lease()
     )
-
-    repository.save_calls.clear()
-    first_resume = await processor.process(
-        _message(SQSOperation.RESUME, approved.campaign_id, approved.job_id, idempotency_key="resume-1"),
-        approved,
-        _lease(),
-    )
-    assert first_resume.completed is True
+    assert start_result.completed is True
     failed = repository.save_calls[-1]
     assert failed.status == CampaignStatus.FAILED
     assert failed.retry.resume_step == WorkflowStep.PACKAGE
@@ -427,15 +416,13 @@ async def test_package_failure_then_retry_reaches_final():
     assert failed.error.workflow_step == WorkflowStep.PACKAGE
     assert failed.package_artifact is None
 
-    # CampaignService.retry() (fixed in C9) resubmits RESUME -- not START -- whenever
-    # resume_step == PACKAGE. Simulate exactly that second delivery.
     repository.save_calls.clear()
-    second_resume = await processor.process(
-        _message(SQSOperation.RESUME, failed.campaign_id, failed.job_id, idempotency_key="resume-2"),
+    resume_retry = await processor.process(
+        _message(SQSOperation.RESUME, failed.campaign_id, failed.job_id, idempotency_key="resume-retry"),
         failed,
         _lease(),
     )
-    assert second_resume.completed is True
+    assert resume_retry.completed is True
     final = repository.save_calls[-1]
     assert final.status == CampaignStatus.FINAL
     assert final.package_artifact is not None
@@ -498,8 +485,9 @@ async def test_pre_review_failure_then_retry_resumes_without_duplicating_complet
         _message(SQSOperation.START, failed.campaign_id, failed.job_id, idempotency_key="retry-1"), failed, _lease()
     )
     assert retry_result.completed is True
-    ready = repository.save_calls[-1]
-    assert ready.status == CampaignStatus.READY_FOR_REVIEW
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.FINAL  # no human approval gate -- reaches FINAL directly
+    ready = next(v for v in repository.save_calls if v.status == CampaignStatus.READY_FOR_REVIEW)
     assert ready.strategy == strategy_before_retry
     assert ready.campaign_copy == copy_before_retry
     assert ready.storyboard == storyboard_before_retry
@@ -572,7 +560,7 @@ async def test_redelivery_after_crash_before_step_record_reconciles_video_withou
 
     assert result.completed is True
     final = repository.save_calls[-1]
-    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.status == CampaignStatus.FINAL  # no human approval gate -- reaches FINAL directly
     assert final.video_artifact is not None
     assert final.video_artifact.artifact_id == deterministic_video_artifact_id(
         version.campaign_id, version.campaign_version
@@ -592,24 +580,19 @@ async def test_event_ordering_is_coherent_and_redelivery_adds_no_duplicates():
     version = _version()
 
     await processor.process(_message(SQSOperation.START, version.campaign_id, version.job_id), version, _lease())
-    ready = repository.save_calls[-1]
+    ready = next(v for v in repository.save_calls if v.status == CampaignStatus.READY_FOR_REVIEW)
 
-    # Redeliver the identical START message: every step is already SUCCEEDED and
-    # starting_status is already READY_FOR_REVIEW, so nothing new should be emitted.
+    # Redeliver the identical START message against the READY_FOR_REVIEW snapshot:
+    # every step is already SUCCEEDED/terminal, so nothing new should be emitted.
+    # (The SQS consumer's job_id-based completion check, tested separately, is
+    # what prevents a redelivery from reaching process() again in the first
+    # place once a campaign is genuinely done -- this only re-exercises
+    # graph-level step-tracking idempotency in isolation.)
     events_after_first_start = list(repository.events)
     await processor.process(
         _message(SQSOperation.START, version.campaign_id, version.job_id, idempotency_key="dup"), ready, _lease()
     )
     assert repository.events == events_after_first_start
-
-    approved = ready.model_copy(
-        update={"status": CampaignStatus.APPROVED, "job_id": _resume_job_id(ready.campaign_id, ready.campaign_version)}
-    )
-    await processor.process(
-        _message(SQSOperation.RESUME, approved.campaign_id, approved.job_id, idempotency_key="resume"),
-        approved,
-        _lease(),
-    )
 
     for step in (
         WorkflowStep.STRATEGY,

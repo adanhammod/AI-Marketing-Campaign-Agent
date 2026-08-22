@@ -6,9 +6,9 @@ import { AlertIcon } from '../components/creation/icons'
 import { CampaignHeader } from '../components/detail/CampaignHeader'
 import { CampaignOverview } from '../components/detail/CampaignOverview'
 import { CopyCard } from '../components/detail/CopyCard'
+import { FinalPackageCard } from '../components/detail/FinalPackageCard'
 import { ImageGallery, type GalleryImage } from '../components/detail/ImageGallery'
 import { PipelineStepper } from '../components/detail/PipelineStepper'
-import { ReviewActionsCard } from '../components/detail/ReviewActionsCard'
 import { StoryboardSection } from '../components/detail/StoryboardSection'
 import { StrategyCard } from '../components/detail/StrategyCard'
 import { VideoCard } from '../components/detail/VideoCard'
@@ -125,6 +125,9 @@ function CampaignDetailContent({
     }))
   const audioArtifact = (artifacts ?? []).find((artifact) => artifact.artifact_type === 'AUDIO')
   const videoArtifact = (artifacts ?? []).find((artifact) => artifact.artifact_type === 'VIDEO')
+  const finalPackageArtifact = (artifacts ?? []).find(
+    (artifact) => artifact.artifact_type === 'FINAL_PACKAGE',
+  )
 
   return (
     <div className={styles.sections}>
@@ -148,7 +151,9 @@ function CampaignDetailContent({
         status={statusFor('voiceover', hasAudio)}
       />
       <VideoCard videoUrl={videoArtifact?.download_url} status={statusFor('video', hasVideo)} />
-      {data.status === 'READY_FOR_REVIEW' ? <ReviewActionsCard /> : null}
+      {data.status === 'FINAL' ? (
+        <FinalPackageCard downloadUrl={finalPackageArtifact?.download_url} />
+      ) : null}
     </div>
   )
 }

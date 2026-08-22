@@ -114,6 +114,12 @@ class GraphJobProcessor(JobProcessor):
         graph = self._build_graph(message.operation)
         current = version
         starting_status = version.status
+        # `current` (and, once the first stream finishes, `starting_status`) must
+        # stay plain local variables reassigned inside these loops -- not values
+        # returned from a helper -- so that a mid-stream exception still leaves
+        # `current` holding the last successfully persisted chunk for the except
+        # block below (self._fail(current, ...)), instead of the stale value from
+        # before the stream started.
         try:
             async for chunk in graph.astream(
                 {"version": current, "correlation_id": message.correlation_id}, stream_mode="values"
@@ -121,6 +127,27 @@ class GraphJobProcessor(JobProcessor):
                 current = chunk["version"]
                 events = self._terminal_events(current, starting_status, message.correlation_id)
                 await self._repository.save_version(current, lease, events)
+
+            if (
+                message.operation in (SQSOperation.START, SQSOperation.REGENERATE)
+                and current.status == CampaignStatus.READY_FOR_REVIEW
+            ):
+                # No human approval gate: finish packaging in this same
+                # processing pass instead of waiting for a human-issued
+                # RESUME message. READY_FOR_REVIEW is still durably saved
+                # above (with its REVIEW_READY event) first, preserving the
+                # audit trail exactly as before. Rebase starting_status to
+                # READY_FOR_REVIEW so this second stream's own pass-through
+                # chunks aren't misread as "just reached READY_FOR_REVIEW"
+                # again (which would double-emit REVIEW_READY).
+                starting_status = current.status
+                package_graph = build_resume_graph(self._repository, self._is_cancelled, self._package_pipeline)
+                async for chunk in package_graph.astream(
+                    {"version": current, "correlation_id": message.correlation_id}, stream_mode="values"
+                ):
+                    current = chunk["version"]
+                    events = self._terminal_events(current, starting_status, message.correlation_id)
+                    await self._repository.save_version(current, lease, events)
             return ProcessingResult(completed=True, marker=f"{message.operation.value}_COMPLETED")
         except BaseException as exc:
             step, error = (exc.step, exc.error) if isinstance(exc, NodeFailure) else (None, exc)

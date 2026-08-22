@@ -86,70 +86,6 @@
         "title": "ApprovalRecord",
         "type": "object"
       },
-      "ApprovalRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "note": {
-            "anyOf": [
-              {
-                "maxLength": 500,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          },
-          "review_manifest_checksum": {
-            "pattern": "^[0-9a-f]{64}$",
-            "title": "Review Manifest Checksum",
-            "type": "string"
-          }
-        },
-        "required": [
-          "review_manifest_checksum"
-        ],
-        "title": "ApprovalRequest",
-        "type": "object"
-      },
-      "ApprovalResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "approval_id": {
-            "format": "uuid",
-            "title": "Approval Id",
-            "type": "string"
-          },
-          "campaign_id": {
-            "format": "uuid",
-            "title": "Campaign Id",
-            "type": "string"
-          },
-          "campaign_version": {
-            "minimum": 1.0,
-            "title": "Campaign Version",
-            "type": "integer"
-          },
-          "job_id": {
-            "format": "uuid",
-            "title": "Job Id",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/CampaignStatus"
-          }
-        },
-        "required": [
-          "campaign_id",
-          "campaign_version",
-          "approval_id",
-          "status",
-          "job_id"
-        ],
-        "title": "ApprovalResponse",
-        "type": "object"
-      },
       "ArtifactAttribution": {
         "additionalProperties": false,
         "properties": {
@@ -437,6 +373,10 @@
             "minLength": 2,
             "title": "Tone",
             "type": "string"
+          },
+          "video_style": {
+            "$ref": "#/components/schemas/VideoStyle",
+            "default": "VOICEOVER_AD"
           }
         },
         "required": [
@@ -761,6 +701,7 @@
           "STEP_STARTED",
           "STEP_COMPLETED",
           "STEP_REUSED",
+          "STEP_SKIPPED",
           "RETRY_SCHEDULED",
           "PROVIDER_CALL_STARTED",
           "PROVIDER_CALL_COMPLETED",
@@ -1186,6 +1127,10 @@
             "minLength": 2,
             "title": "Tone",
             "type": "string"
+          },
+          "video_style": {
+            "$ref": "#/components/schemas/VideoStyle",
+            "default": "VOICEOVER_AD"
           }
         },
         "required": [
@@ -1778,11 +1723,21 @@
         "title": "StrategyOutput",
         "type": "object"
       },
+      "VideoStyle": {
+        "enum": [
+          "VOICEOVER_AD",
+          "CINEMATIC_TEXT_AD",
+          "MUSIC_FIRST_REEL"
+        ],
+        "title": "VideoStyle",
+        "type": "string"
+      },
       "WorkflowStep": {
         "enum": [
           "strategy",
           "copy",
           "storyboard",
+          "creative_plan",
           "images",
           "voiceover",
           "video",
@@ -2167,110 +2122,6 @@
           }
         },
         "summary": "Get Campaign Events",
-        "tags": [
-          "campaigns"
-        ]
-      }
-    },
-    "/api/v1/campaigns/{campaign_id}/versions/{version}/approve": {
-      "post": {
-        "operationId": "approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "campaign_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Campaign Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "version",
-            "required": true,
-            "schema": {
-              "minimum": 1,
-              "title": "Version",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "maxLength": 128,
-              "minLength": 1,
-              "title": "Idempotency-Key",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApprovalRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApprovalResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConflictError"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StandardValidationError"
-                }
-              }
-            },
-            "description": "Unprocessable Entity"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StandardValidationError"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "summary": "Approve Campaign",
         "tags": [
           "campaigns"
         ]

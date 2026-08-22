@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
-from .api import ApprovalRequest, CampaignCreationRequest, CampaignDetailResponse, RevisionRequest
+from .api import CampaignCreationRequest, CampaignDetailResponse, RevisionRequest
 from .artifacts import ArtifactReference
 from .errors import SanitizedWorkflowError
 from .events import CampaignEvent
 from .sqs import SQSJobMessage
-SCHEMAS={"campaign-creation-request":CampaignCreationRequest,"campaign-detail-response":CampaignDetailResponse,"sqs-job-message":SQSJobMessage,"artifact-reference":ArtifactReference,"sanitized-error":SanitizedWorkflowError,"campaign-event":CampaignEvent,"revision-request":RevisionRequest,"approval-request":ApprovalRequest}
+SCHEMAS={"campaign-creation-request":CampaignCreationRequest,"campaign-detail-response":CampaignDetailResponse,"sqs-job-message":SQSJobMessage,"artifact-reference":ArtifactReference,"sanitized-error":SanitizedWorkflowError,"campaign-event":CampaignEvent,"revision-request":RevisionRequest}
 def generate(output:Path)->list[Path]:
     output.mkdir(parents=True,exist_ok=True); paths=[]
     for name,model in sorted(SCHEMAS.items()):

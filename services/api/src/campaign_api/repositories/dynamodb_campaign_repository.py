@@ -5,12 +5,11 @@ from uuid import UUID
 
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer  # type: ignore[import-untyped]
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
-from campaign_contracts.campaign import ApprovalRecord, CampaignAggregateMetadata, CampaignVersion
+from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignVersion
 from campaign_contracts.dynamodb import (
     event_sk,
     meta_sk,
     pk,
-    serialize_approval,
     serialize_event,
     serialize_meta,
     serialize_version,
@@ -214,104 +213,6 @@ class DynamoDBCampaignRepository(CampaignRepository):
                 raise InvalidStateTransition("campaign optimistic-lock conflict") from None
             raise RepositoryFailure("campaign update unavailable") from None
 
-    async def approve(
-        self,
-        aggregate: CampaignAggregateMetadata,
-        version: CampaignVersion,
-        approval: ApprovalRecord,
-        events: builtins.list[CampaignEvent],
-    ) -> None:
-        expected_meta_lock = aggregate.lock_version - 1
-        expected_version_lock = version.lock_version - 1
-        expected_event_sequence = aggregate.event_sequence - len(events)
-        if expected_meta_lock < 0 or expected_version_lock < 0 or expected_event_sequence < 0:
-            raise InvalidStateTransition("lock version must advance by one")
-        approval_payload = approval.model_dump(mode="json", exclude_none=True, by_alias=True)
-        values = {
-            ":status": _SERIALIZER.serialize(version.status.value),
-            ":progress": _SERIALIZER.serialize(version.progress_percent),
-            ":updated": _SERIALIZER.serialize(version.updated_at.isoformat().replace("+00:00", "Z")),
-            ":new_lock": _SERIALIZER.serialize(version.lock_version),
-            ":old_meta_lock": _SERIALIZER.serialize(expected_meta_lock),
-            ":old_version_lock": _SERIALIZER.serialize(expected_version_lock),
-            ":version_number": _SERIALIZER.serialize(version.campaign_version),
-            ":gsi2pk": _SERIALIZER.serialize(f"STATUS#{version.status.value}"),
-            ":gsi2sk": _SERIALIZER.serialize(f"{version.updated_at.isoformat()}#{version.campaign_id}"),
-            ":job_id": _SERIALIZER.serialize(str(version.job_id)),
-            ":approval": _SERIALIZER.serialize(approval_payload),
-            ":event_seq": _SERIALIZER.serialize(aggregate.event_sequence),
-            ":old_event_seq": _SERIALIZER.serialize(expected_event_sequence),
-        }
-        transaction = [
-            {
-                "Update": {
-                    "TableName": self._table_name,
-                    "Key": _marshal_item({"PK": pk(aggregate.campaign_id), "SK": meta_sk()}),
-                    "UpdateExpression": (
-                        "SET current_status=:status, current_progress=:progress, updated_at=:updated, "
-                        "lock_version=:new_lock, event_sequence=:event_seq, GSI2PK=:gsi2pk, GSI2SK=:gsi2sk"
-                    ),
-                    "ConditionExpression": (
-                        "lock_version=:old_meta_lock AND current_version=:version_number "
-                        "AND event_sequence=:old_event_seq"
-                    ),
-                    "ExpressionAttributeValues": {
-                        key: values[key]
-                        for key in (
-                            ":status",
-                            ":progress",
-                            ":updated",
-                            ":new_lock",
-                            ":event_seq",
-                            ":old_meta_lock",
-                            ":version_number",
-                            ":gsi2pk",
-                            ":gsi2sk",
-                            ":old_event_seq",
-                        )
-                    },
-                }
-            },
-            {
-                "Update": {
-                    "TableName": self._table_name,
-                    "Key": _marshal_item({"PK": pk(version.campaign_id), "SK": version_sk(version.campaign_version)}),
-                    "UpdateExpression": (
-                        "SET #status=:status, progress_percent=:progress, updated_at=:updated, "
-                        "lock_version=:new_lock, job_id=:job_id, approval=:approval"
-                    ),
-                    "ConditionExpression": "lock_version=:old_version_lock",
-                    "ExpressionAttributeNames": {"#status": "status"},
-                    "ExpressionAttributeValues": {
-                        key: values[key]
-                        for key in (
-                            ":status",
-                            ":progress",
-                            ":updated",
-                            ":new_lock",
-                            ":old_version_lock",
-                            ":job_id",
-                            ":approval",
-                        )
-                    },
-                }
-            },
-            {
-                "Put": {
-                    "TableName": self._table_name,
-                    "Item": _marshal_item(serialize_approval(approval)),
-                    "ConditionExpression": "attribute_not_exists(PK) AND attribute_not_exists(SK)",
-                }
-            },
-            *_event_puts(self._table_name, events),
-        ]
-        try:
-            await asyncio.to_thread(self._client.transact_write_items, TransactItems=transaction)
-        except ClientError as exc:
-            if self._is_conditional(exc):
-                raise InvalidStateTransition("campaign optimistic-lock conflict") from None
-            raise RepositoryFailure("campaign update unavailable") from None
-
     async def cancel(
         self, aggregate: CampaignAggregateMetadata, version: CampaignVersion, events: builtins.list[CampaignEvent]
     ) -> None:
@@ -473,25 +374,24 @@ class DynamoDBCampaignRepository(CampaignRepository):
     async def revise(
         self,
         aggregate: CampaignAggregateMetadata,
-        parent_version: CampaignVersion,
+        parent_version: CampaignVersion | None,
         child_version: CampaignVersion,
         events: builtins.list[CampaignEvent],
     ) -> None:
+        # parent_version=None means the parent (e.g. a FINAL, immutable version)
+        # must not be written at all -- only aggregate meta, the new child, and
+        # events are part of the transaction.
         expected_meta_lock = aggregate.lock_version - 1
-        expected_parent_lock = parent_version.lock_version - 1
         expected_event_sequence = aggregate.event_sequence - len(events)
-        if expected_meta_lock < 0 or expected_parent_lock < 0 or expected_event_sequence < 0:
+        if expected_meta_lock < 0 or expected_event_sequence < 0:
             raise InvalidStateTransition("lock version must advance by one")
         values = {
             ":new_version_number": _SERIALIZER.serialize(child_version.campaign_version),
             ":child_status": _SERIALIZER.serialize(child_version.status.value),
-            ":parent_status": _SERIALIZER.serialize(parent_version.status.value),
             ":updated": _SERIALIZER.serialize(child_version.updated_at.isoformat().replace("+00:00", "Z")),
             ":new_meta_lock": _SERIALIZER.serialize(aggregate.lock_version),
-            ":new_parent_lock": _SERIALIZER.serialize(parent_version.lock_version),
             ":old_meta_lock": _SERIALIZER.serialize(expected_meta_lock),
-            ":old_parent_lock": _SERIALIZER.serialize(expected_parent_lock),
-            ":parent_version_number": _SERIALIZER.serialize(parent_version.campaign_version),
+            ":parent_version_number": _SERIALIZER.serialize(child_version.parent_version),
             ":gsi2pk": _SERIALIZER.serialize(f"STATUS#{child_version.status.value}"),
             ":gsi2sk": _SERIALIZER.serialize(f"{child_version.updated_at.isoformat()}#{child_version.campaign_id}"),
             ":event_seq": _SERIALIZER.serialize(aggregate.event_sequence),
@@ -528,32 +428,42 @@ class DynamoDBCampaignRepository(CampaignRepository):
                     },
                 }
             },
-            {
-                "Update": {
-                    "TableName": self._table_name,
-                    "Key": _marshal_item(
-                        {"PK": pk(parent_version.campaign_id), "SK": version_sk(parent_version.campaign_version)}
-                    ),
-                    "UpdateExpression": (
-                        "SET #status=:parent_status, updated_at=:updated, lock_version=:new_parent_lock"
-                    ),
-                    "ConditionExpression": "lock_version=:old_parent_lock",
-                    "ExpressionAttributeNames": {"#status": "status"},
-                    "ExpressionAttributeValues": {
-                        key: values[key]
-                        for key in (":parent_status", ":updated", ":new_parent_lock", ":old_parent_lock")
-                    },
+        ]
+        if parent_version is not None:
+            expected_parent_lock = parent_version.lock_version - 1
+            if expected_parent_lock < 0:
+                raise InvalidStateTransition("lock version must advance by one")
+            transaction.append(
+                {
+                    "Update": {
+                        "TableName": self._table_name,
+                        "Key": _marshal_item(
+                            {"PK": pk(parent_version.campaign_id), "SK": version_sk(parent_version.campaign_version)}
+                        ),
+                        "UpdateExpression": (
+                            "SET #status=:parent_status, updated_at=:updated, lock_version=:new_parent_lock"
+                        ),
+                        "ConditionExpression": "lock_version=:old_parent_lock",
+                        "ExpressionAttributeNames": {"#status": "status"},
+                        "ExpressionAttributeValues": {
+                            ":parent_status": _SERIALIZER.serialize(parent_version.status.value),
+                            ":updated": values[":updated"],
+                            ":new_parent_lock": _SERIALIZER.serialize(parent_version.lock_version),
+                            ":old_parent_lock": _SERIALIZER.serialize(expected_parent_lock),
+                        },
+                    }
                 }
-            },
+            )
+        transaction.append(
             {
                 "Put": {
                     "TableName": self._table_name,
                     "Item": _marshal_item(serialize_version(child_version)),
                     "ConditionExpression": "attribute_not_exists(PK) AND attribute_not_exists(SK)",
                 }
-            },
-            *_event_puts(self._table_name, events),
-        ]
+            }
+        )
+        transaction.extend(_event_puts(self._table_name, events))
         try:
             await asyncio.to_thread(self._client.transact_write_items, TransactItems=transaction)
         except ClientError as exc:

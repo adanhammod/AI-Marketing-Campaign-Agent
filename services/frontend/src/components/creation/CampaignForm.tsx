@@ -130,6 +130,8 @@ export function CampaignForm({ onCreated }: CampaignFormProps) {
         key_message: values.key_message.trim() || undefined,
         call_to_action: values.call_to_action.trim() || undefined,
         brand_colors: parseBrandColors(values.brand_colors),
+        // No video-style selector in the UI yet; the backend's own default.
+        video_style: 'VOICEOVER_AD',
       })
       onCreated(response.campaign_id)
     } catch (error) {

@@ -321,7 +321,11 @@ def _processor(
 
 
 @pytest.mark.asyncio
-async def test_start_processes_full_pipeline_and_reaches_ready_for_review():
+async def test_start_processes_full_pipeline_and_reaches_final_automatically():
+    """No human approval gate: a single START message run must land the
+    campaign on FINAL directly (packaging runs in the same processing pass
+    right after READY_FOR_REVIEW), not stop at READY_FOR_REVIEW awaiting a
+    separate human-triggered RESUME message."""
     repository, processor = _processor()
     version = _version()
     message = _message(SQSOperation.START, version.campaign_id, version.job_id)
@@ -330,15 +334,20 @@ async def test_start_processes_full_pipeline_and_reaches_ready_for_review():
 
     assert result.completed is True
     final = repository.save_calls[-1]
-    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.status == CampaignStatus.FINAL
     assert final.strategy is not None
     assert final.campaign_copy is not None
     assert final.storyboard is not None
     assert final.creative_video_plan is not None
     assert len(final.image_artifacts) == 3
     assert final.video_artifact is not None
+    assert final.review_package is not None
+    assert final.package_artifact is not None
     emitted = [event.event_type for events in repository.version_events for event in events]
+    # Both terminal-milestone events fire, in order, within this one processing pass.
     assert emitted.count(CampaignEventType.REVIEW_READY) == 1
+    assert emitted.count(CampaignEventType.FINALIZED) == 1
+    assert emitted.index(CampaignEventType.REVIEW_READY) < emitted.index(CampaignEventType.FINALIZED)
 
     assert final.error is None
     assert final.retry.resume_step is None
@@ -376,12 +385,19 @@ async def test_start_persisted_steps_are_step_tracked_for_skip_reuse():
 
 @pytest.mark.asyncio
 async def test_resume_runs_only_prepare_final_package():
-    repository, processor = _processor()
+    """RESUME remains a fully supported standalone operation (e.g. a manual
+    escape hatch for a campaign that reached READY_FOR_REVIEW/APPROVED before
+    the no-approval-gate behavior shipped) -- tested here in isolation via a
+    fresh repository/processor pair, since a normal START call would already
+    have run and step-tracked PACKAGE itself."""
+    start_repository, start_processor = _processor()
     version = _version()
     start_message = _message(SQSOperation.START, version.campaign_id, version.job_id)
-    await processor.process(start_message, version, _lease())
-    approved = repository.save_calls[-1].model_copy(update={"status": CampaignStatus.APPROVED})
-    repository.save_calls.clear()
+    await start_processor.process(start_message, version, _lease())
+    ready = next(v for v in start_repository.save_calls if v.status == CampaignStatus.READY_FOR_REVIEW)
+    approved = ready.model_copy(update={"status": CampaignStatus.APPROVED})
+
+    repository, processor = _processor()
     resume_message = _message(SQSOperation.RESUME, approved.campaign_id, approved.job_id, idempotency_key="resume")
     result = await processor.process(resume_message, approved, _lease())
 
@@ -417,7 +433,7 @@ async def test_regenerate_strategy_seeds_nothing_and_runs_full_pipeline():
     assert all(record.status == StepStatus.SUCCEEDED for record in repository.steps.values())
     assert WorkflowStep.STRATEGY in repository.running_steps
     final = repository.save_calls[-1]
-    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.status == CampaignStatus.FINAL
     assert final.strategy is not None
     assert final.campaign_copy is not None
     assert final.storyboard is not None
@@ -445,7 +461,7 @@ async def test_regenerate_copy_seeds_strategy_as_reused_and_skips_its_provider()
     assert WorkflowStep.STRATEGY not in repository.running_steps
     assert WorkflowStep.COPY in repository.running_steps
     final = repository.save_calls[-1]
-    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.status == CampaignStatus.FINAL
     assert final.strategy == version.strategy  # preserved, not regenerated
     assert final.campaign_copy is not None
     reused_events = [
@@ -485,7 +501,7 @@ async def test_regenerate_storyboard_seeds_strategy_and_copy_as_reused():
     )
     assert WorkflowStep.CREATIVE_PLAN in repository.running_steps
     final = repository.save_calls[-1]
-    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.status == CampaignStatus.FINAL
     assert final.strategy == version.strategy
     assert final.campaign_copy == version.campaign_copy
     assert final.creative_video_plan is not None
@@ -554,7 +570,7 @@ async def test_regenerate_video_seeds_strategy_copy_storyboard_creative_plan_ima
         assert step not in repository.running_steps
     assert WorkflowStep.VIDEO in repository.running_steps
     final = repository.save_calls[-1]
-    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.status == CampaignStatus.FINAL
     assert final.image_artifacts == version.image_artifacts  # preserved, not regenerated
     assert final.voice_artifact == version.voice_artifact  # preserved, not regenerated
     assert final.creative_video_plan == version.creative_video_plan  # preserved, not regenerated
@@ -791,7 +807,7 @@ async def test_retry_after_between_node_failure_does_not_rerender_existing_video
     assert second.marker == "START_COMPLETED"
     assert video_provider.calls == 1  # not re-invoked -- VIDEO was already SUCCEEDED
     final = repository.save_calls[-1]
-    assert final.status == CampaignStatus.READY_FOR_REVIEW
+    assert final.status == CampaignStatus.FINAL
     assert final.video_artifact == failed_version.video_artifact  # reused, not regenerated
 
 
@@ -954,20 +970,25 @@ async def test_integration_start_message_is_processed_and_acknowledged():
     outcome = await consumer.process_raw(_raw(message))
 
     assert outcome == MessageOutcome.ACKNOWLEDGED
-    assert repository.version.status == CampaignStatus.READY_FOR_REVIEW
+    assert repository.version.status == CampaignStatus.FINAL
     assert repository.completed is True
 
 
 @pytest.mark.asyncio
 async def test_integration_resume_message_is_processed_and_acknowledged():
+    """RESUME remains a fully supported standalone operation -- tested here via a
+    fresh repository seeded with a READY_FOR_REVIEW/APPROVED-shaped version, since
+    a normal START run would already have step-tracked PACKAGE itself."""
     version = _version()
-    repository = _FullFakeRepository(version)
-    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
+    start_repository = _FullFakeRepository(version)
+    start_processor = GraphJobProcessor(start_repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
     start_message = _message(SQSOperation.START, version.campaign_id, version.job_id, idempotency_key="start")
-    await processor.process(start_message, version, _lease())
-    repository.version = repository.saved_versions[-1].model_copy(update={"status": CampaignStatus.APPROVED})
-    repository.completed = False
+    await start_processor.process(start_message, version, _lease())
+    ready = next(v for v in start_repository.saved_versions if v.status == CampaignStatus.READY_FOR_REVIEW)
+    approved = ready.model_copy(update={"status": CampaignStatus.APPROVED})
 
+    repository = _FullFakeRepository(approved)
+    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
     consumer = SQSConsumer(_StubSQSClient(), repository, processor, _settings())
     resume_message = _message(SQSOperation.RESUME, version.campaign_id, version.job_id, idempotency_key="resume")
 

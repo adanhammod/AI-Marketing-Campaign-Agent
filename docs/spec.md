@@ -25,9 +25,9 @@ Audience: software, AI, frontend, backend, DevOps, QA, operations, and project r
 
 ## 2. System Overview
 
-Small organizations lack time and integrated skills to create coordinated campaigns. The single-user graduation-project MVP accepts one brief, creates a durable campaign version, queues asynchronous work, orchestrates AI generation, stores progress and checkpoints, renders media, and pauses for human review before finalization. Amazon Bedrock, Image Generator MCP, HyperFrames MCP, TTS, AWS, and GitHub are external dependencies.
+Small organizations lack time and integrated skills to create coordinated campaigns. The single-user graduation-project MVP accepts one brief, creates a durable campaign version, queues asynchronous work, orchestrates AI generation, stores progress and checkpoints, renders media, and finalizes automatically with no human review step required. Amazon Bedrock, Image Generator MCP, HyperFrames MCP, TTS, AWS, and GitHub are external dependencies.
 
-Required output: strategy, audience analysis, campaign message, headline, caption, CTA, hashtags, three images, three-scene storyboard, voice-over audio, approximately 15-second MP4, manifest, and an approved final archive.
+Required output: strategy, audience analysis, campaign message, headline, caption, CTA, hashtags, three images, three-scene storyboard, voice-over audio, approximately 15-second MP4, manifest, and a finalized downloadable archive.
 
 ```mermaid
 flowchart LR
@@ -78,7 +78,7 @@ flowchart LR
 
 ### Included
 
-Single demo user; request validation; asynchronous and resumable LangGraph processing; strategy, copy, storyboard, images, voice-over, and video; immutable campaign versions; review, approval, targeted revision, retry, and cancellation; DynamoDB state/checkpoints; S3 binary assets; SQS jobs and DLQ; approved final package; kubeadm on EC2; observability; dev/prod configuration.
+Single demo user; request validation; asynchronous and resumable LangGraph processing; strategy, copy, storyboard, images, voice-over, and video; immutable campaign versions; automatic finalization, targeted revision, retry, and cancellation (no human approval step); DynamoDB state/checkpoints; S3 binary assets; SQS jobs and DLQ; final downloadable package; kubeadm on EC2; observability; dev/prod configuration.
 
 ### Out of Scope
 
@@ -183,7 +183,7 @@ The normative lifecycle is defined in [`contracts/campaign-lifecycle.md`](contra
 
 `CREATED`, `QUEUED`, `GENERATING_STRATEGY`, `GENERATING_COPY`, `GENERATING_STORYBOARD`, `GENERATING_IMAGES`, `RENDERING_VIDEO`, `READY_FOR_REVIEW`, `REVISION_REQUESTED`, `APPROVED`, `FINAL`, `FAILED`, and `CANCELLED`.
 
-FastAPI owns user-command transitions; the leased LangGraph worker owns generation transitions. `READY_FOR_REVIEW` means generated outputs are reviewable, not final. Only the exact approved version may move `APPROVED -> FINAL`. Revision creates version `n+1`; it never mutates version `n`. Retry uses `FAILED -> QUEUED` without introducing a separate retry status. Illegal transitions fail atomically with `409 INVALID_STATE_TRANSITION`. Progress percentages, cancellation boundaries, terminal behavior, and durable event ordering are frozen in the lifecycle contract.
+FastAPI owns user-command transitions; the leased LangGraph worker owns generation transitions. `READY_FOR_REVIEW` means generated outputs are reviewable, and is also where the worker automatically continues to packaging and `FINAL` in the same processing pass -- no human approval action exists. `APPROVED` is retained in the enum only for backward compatibility with data/messages predating this behavior; nothing currently produces it. Revision (available from `READY_FOR_REVIEW` or `FINAL`) creates version `n+1`; it never mutates version `n` -- a `FINAL` version n's own record is immutable and never rewritten. Retry uses `FAILED -> QUEUED` without introducing a separate retry status. Illegal transitions fail atomically with `409 INVALID_STATE_TRANSITION`. Progress percentages, cancellation boundaries, terminal behavior, and durable event ordering are frozen in the lifecycle contract.
 ## 11. AI Agent Design
 
 The SQS consumer hosts the LangGraph worker for the complete generation workflow, not only video rendering. State includes campaign ID, immutable version, request, revision scope, structured outputs, provider job IDs, completed nodes, retry counters, errors, lease, and checkpoint version. Every node persists valid output before advancing. Resume verifies idempotency keys and skips committed nodes. Human review is a durable interrupt; no worker waits in memory.
@@ -288,10 +288,10 @@ Message deletion requires validated input, durable completion evidence, and reta
 4. Amazon Bedrock and MCP services generate strategy, copy, storyboard, images, audio, and video.
 5. Each node stores structured state/checkpoints in DynamoDB and binary output in S3.
 6. The version reaches `READY_FOR_REVIEW`; React polls and previews assets through presigned URLs.
-7. Approval of the exact version moves it to `APPROVED`, queues package finalization, and then moves it to `FINAL`.
-8. Revision feedback creates an immutable next version and queues targeted regeneration.
+7. No human approval step: the worker proceeds automatically, in the same processing pass, to package finalization and then `FINAL`.
+8. Revision feedback (available while `READY_FOR_REVIEW` or after `FINAL`) creates an immutable next version and queues targeted regeneration.
 
-Retryable failures use bounded exponential backoff with jitter. Exhausted failures become `FAILED`; eligible manual retry republishes a resume command. Cancellation is checked between nodes. Partial output remains visible and no generated artifact or package is described as final before approval.
+Retryable failures use bounded exponential backoff with jitter. Exhausted failures become `FAILED`; eligible manual retry republishes a resume command. Cancellation is checked between nodes. Partial output remains visible while generation is in progress.
 
 ## 16. API Design
 
@@ -304,12 +304,11 @@ The frozen MVP surface is:
 - `GET /api/v1/campaigns/{campaign_id}`
 - `GET /api/v1/campaigns/{campaign_id}/events`
 - `GET /api/v1/campaigns/{campaign_id}/artifacts`
-- `POST /api/v1/campaigns/{campaign_id}/versions/{version}/approve`
 - `POST /api/v1/campaigns/{campaign_id}/versions/{version}/revisions`
 - `POST /api/v1/campaigns/{campaign_id}/versions/{version}/retry`
 - `POST /api/v1/campaigns/{campaign_id}/versions/{version}/cancel`
 
-Creation returns `202`; reads return public projections and short-lived asset links only. Approval, revision, retry, and cancellation address an exact version and enforce optimistic state preconditions. Health, readiness, and internal Prometheus endpoints remain operational endpoints rather than campaign-domain contracts.
+There is no approval endpoint: campaigns complete automatically with no human action. Creation returns `202`; reads return public projections and short-lived asset links only. Revision, retry, and cancellation address an exact version and enforce optimistic state preconditions. Health, readiness, and internal Prometheus endpoints remain operational endpoints rather than campaign-domain contracts.
 ## 17. Data Model
 
 The normative typed campaign state, immutable-version rules, regeneration matrix, DynamoDB keys, leases, checkpoints, conditional writes, and access patterns are defined in [`contracts/data-model.md`](contracts/data-model.md). The executable representation is the dependency-free Pydantic v2 package under `shared/src/campaign_contracts/`; generated JSON Schemas under `docs/contracts/generated/` must be reproduced from that package.
@@ -447,7 +446,7 @@ No user error includes stack trace, credential, internal host, raw provider payl
 | Voice-over | Decodable stored audio covers narration and fits video. |
 | Video | FFprobe confirms MP4, H.264, AAC, 9:16, accepted resolution, 13â€“17 seconds. |
 | Storage | Metadata/assets survive pod restart; assets private/checksum-valid. |
-| Approval/Package | Version reaches `READY_FOR_REVIEW`; only explicit approval permits `APPROVED` and then `FINAL`; final ZIP contains manifest, text, storyboard, three images, audio, and MP4. |
+| Package | Version reaches `READY_FOR_REVIEW`, then automatically `FINAL` with no human action; final ZIP contains manifest, text, storyboard, three images, audio, and MP4. |
 | Errors | Injected failures yield bounded retries, correct status, sanitized error, preserved partials. |
 | Deployment | Dev/prod configuration exists; immutable prod deployment passes smoke tests/rollback. |
 | Monitoring | Required metrics/dashboards exist and campaign failure is traceable by ID. |
@@ -465,7 +464,7 @@ Social publishing/scheduling; advanced authentication, organizations, RBAC, and 
 
 ## 32. Approved Technical Decisions
 
-Single-user demo; mandatory human approval; immutable campaign versions; React/TypeScript; Python/FastAPI/Pydantic; asynchronous resumable LangGraph worker; Amazon Bedrock; custom Marketing MCP; Image Generator MCP; HyperFrames MCP; DynamoDB as campaign/checkpoint source of truth; S3 as binary source of truth; SQS/DLQ for durable at-least-once workflow commands; 2â€“5 second polling; presigned URLs; one kubeadm control-plane EC2 node and at least one worker EC2 node; no EKS; Terraform-managed AWS infrastructure; GitHub Actions; Prometheus/Grafana; resource requests/limits; KEDA deferred.
+Single-user demo; fully automated completion (no human approval step); immutable campaign versions; React/TypeScript; Python/FastAPI/Pydantic; asynchronous resumable LangGraph worker; Amazon Bedrock; custom Marketing MCP; Image Generator MCP; HyperFrames MCP; DynamoDB as campaign/checkpoint source of truth; S3 as binary source of truth; SQS/DLQ for durable at-least-once workflow commands; 2â€“5 second polling; presigned URLs; one kubeadm control-plane EC2 node and at least one worker EC2 node; no EKS; Terraform-managed AWS infrastructure; GitHub Actions; Prometheus/Grafana; resource requests/limits; KEDA deferred.
 
 Decisions confirmed during the post-Task-9 architecture review: Marketing MCP is deployed as its own service, not in-process with the LangGraph worker; a single kubeadm cluster hosts `dev` and `prod` as Kubernetes namespaces rather than two clusters; observability scope for MVP is reduced to three Grafana dashboards (Campaign Workflow, Queue/DLQ, Kubernetes) with alerting deferred; network access is security-group-restricted with no production-grade TLS for MVP; DynamoDB is the sole workflow durability source, and LangGraph's native checkpointer/`interrupt()` persistence is not used; delivery follows a walking-skeleton strategy (a full `CREATE`-to-`FINAL` path proven end-to-end with mock/fallback media providers before infrastructure hardening).
 

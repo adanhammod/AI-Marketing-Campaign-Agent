@@ -13,19 +13,15 @@ type CampaignCreationAcceptedResponse = components['schemas']['CampaignCreationA
 type CampaignStatus = components['schemas']['CampaignStatus']
 
 // Statuses where nothing further will change for this specific campaign
-// version without a human action (approve/revise/retry/cancel) -- none of
-// which are wired up in the UI yet, so polling stops here rather than
-// running forever. REVISION_REQUESTED is included: a revision spawns a
-// *new* campaign_version, so this version's own detail record is done
-// changing from this point on.
-const TERMINAL_STATUSES = new Set<CampaignStatus>([
-  'READY_FOR_REVIEW',
-  'REVISION_REQUESTED',
-  'APPROVED',
-  'FINAL',
-  'FAILED',
-  'CANCELLED',
-])
+// version without a human action (revise/retry/cancel) -- none of which are
+// wired up in the UI yet, so polling stops here rather than running forever.
+// Campaigns are generated fully automatically (no approval step), so
+// READY_FOR_REVIEW/APPROVED are transient internal states the pipeline
+// passes through on its way to FINAL, not places polling should stop.
+// REVISION_REQUESTED is included: a revision spawns a *new*
+// campaign_version, so this version's own detail record is done changing
+// from this point on.
+const TERMINAL_STATUSES = new Set<CampaignStatus>(['REVISION_REQUESTED', 'FINAL', 'FAILED', 'CANCELLED'])
 
 export function isTerminalCampaignStatus(status: CampaignStatus): boolean {
   return TERMINAL_STATUSES.has(status)
