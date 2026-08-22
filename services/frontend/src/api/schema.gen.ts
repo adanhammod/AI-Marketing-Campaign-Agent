@@ -73,26 +73,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-<<<<<<< HEAD
-=======
-    "/api/v1/campaigns/{campaign_id}/versions/{version}/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Approve Campaign */
-        post: operations["approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
->>>>>>> f06fc68 (fix(worker): handle voiceover duration before video render)
     "/api/v1/campaigns/{campaign_id}/versions/{version}/cancel": {
         parameters: {
             query?: never;
