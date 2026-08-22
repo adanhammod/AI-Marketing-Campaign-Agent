@@ -148,6 +148,40 @@ describe('CampaignForm', () => {
     expect(idempotencyKey).toBeTruthy()
   })
 
+  it('submits successfully even when crypto.randomUUID is unavailable (insecure-context browsers)', async () => {
+    // crypto.randomUUID() is restricted to secure contexts (HTTPS/localhost)
+    // and is simply undefined on a plain-HTTP origin in real browsers --
+    // this reproduces that by stubbing a crypto without it, keeping only
+    // getRandomValues (which has no such restriction).
+    const realCrypto = globalThis.crypto
+    vi.stubGlobal('crypto', { getRandomValues: realCrypto.getRandomValues.bind(realCrypto) })
+
+    let requestCount = 0
+    server.use(
+      http.post('/api/v1/campaigns', () => {
+        requestCount += 1
+        return HttpResponse.json(campaignCreationAcceptedFixture, { status: 202 })
+      }),
+    )
+    const user = userEvent.setup()
+    const { onCreated } = renderForm()
+    await fillValidForm(user)
+
+    try {
+      await user.click(screen.getByRole('button', { name: 'Create campaign' }))
+
+      await waitFor(() =>
+        expect(onCreated).toHaveBeenCalledWith(campaignCreationAcceptedFixture.campaign_id),
+      )
+      expect(requestCount).toBe(1)
+      expect(
+        screen.queryByText('Something went wrong while creating the campaign. Please try again.'),
+      ).not.toBeInTheDocument()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('shows a normalized error banner and preserves entered values on a 409 response', async () => {
     server.use(
       http.post('/api/v1/campaigns', () =>

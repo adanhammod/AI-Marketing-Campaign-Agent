@@ -3,6 +3,7 @@ import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query'
 
 import { apiClient, unwrap } from '../client'
 import type { components } from '../schema.gen'
+import { generateUuidV4 } from '../uuid'
 
 type CampaignListResponse = components['schemas']['CampaignListResponse']
 type CampaignDetailResponse = components['schemas']['CampaignDetailResponse']
@@ -109,7 +110,7 @@ export function useCreateCampaign(): UseMutationResult<
     mutationFn: (body: CampaignCreationRequest) =>
       unwrap(
         apiClient.POST('/api/v1/campaigns', {
-          params: { header: { 'Idempotency-Key': crypto.randomUUID() } },
+          params: { header: { 'Idempotency-Key': generateUuidV4() } },
           body,
         }),
       ),
