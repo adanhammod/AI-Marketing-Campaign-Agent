@@ -2,10 +2,6 @@ variable "aws_region" {
   type    = string
   default = "us-east-1"
 }
-variable "dev_alb_allowed_cidr" {
-  description = "CIDR allowed to reach the private-demo ALB (port 80, application traffic only). The Kubernetes API is never exposed to this or any external CIDR; it is cluster-internal only, administered via AWS SSM Session Manager."
-  type        = string
-}
 variable "music_asset_object_arn" {
   description = "Optional ARN of the private S3 music object restored by CI."
   type        = string
@@ -26,7 +22,6 @@ module "cluster" {
   name                           = "campaign-cluster"
   vpc_id                         = module.network.vpc_id
   subnet_ids                     = module.network.public_subnet_ids
-  dev_alb_allowed_cidr           = var.dev_alb_allowed_cidr
   aws_region                     = var.aws_region
   control_plane_key_name         = "adan-key"
   control_plane_ssh_allowed_cidr = "0.0.0.0/0"

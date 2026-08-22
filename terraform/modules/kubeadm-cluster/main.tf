@@ -7,9 +7,6 @@ variable "vpc_id" {
 variable "subnet_ids" {
   type = list(string)
 }
-variable "dev_alb_allowed_cidr" {
-  type = string
-}
 variable "control_plane_instance_type" {
   type    = string
   default = "t3.medium"
@@ -80,16 +77,36 @@ resource "aws_security_group" "alb" {
   name   = "${var.name}-alb"
   vpc_id = var.vpc_id
   ingress {
+    description = "Public HTTP -- dev/demo ALB is intentionally internet-facing"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = [var.dev_alb_allowed_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
   egress {
     from_port       = 30080
     to_port         = 30080
     protocol        = "tcp"
     security_groups = [aws_security_group.nodes.id]
+  }
+}
+resource "aws_security_group" "worker_ingress" {
+  name        = "${var.name}-worker-ingress"
+  description = "ingress-nginx NodePort access (TCP 30080 HTTP, TCP 30443 HTTPS) on worker nodes only, reachable only from the ALB -- never directly from the internet. Never attached to the control plane."
+  vpc_id      = var.vpc_id
+  ingress {
+    description     = "HTTP NodePort (ingress-nginx), from the ALB only"
+    from_port       = 30080
+    to_port         = 30080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+  ingress {
+    description     = "HTTPS NodePort (ingress-nginx), from the ALB only -- reserved for future TLS"
+    from_port       = 30443
+    to_port         = 30443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
   }
 }
 resource "aws_iam_role" "control_plane" {
@@ -191,8 +208,8 @@ resource "aws_launch_template" "worker" {
   name_prefix            = "${var.name}-worker-"
   image_id               = data.aws_ami.ubuntu.id
   instance_type          = var.worker_instance_type
-  vpc_security_group_ids = [aws_security_group.nodes.id]
   user_data              = base64encode(local.worker_user_data)
+  vpc_security_group_ids = [aws_security_group.nodes.id, aws_security_group.worker_ingress.id]
   iam_instance_profile { name = aws_iam_instance_profile.worker.name }
   metadata_options {
     http_endpoint               = "enabled"
@@ -238,6 +255,11 @@ resource "aws_lb_target_group" "dev" {
   protocol = "HTTP"
   vpc_id   = var.vpc_id
   health_check {
+    # Reaches ingress-nginx on the worker NodePort; the "/" Ingress rule
+    # (infra/k8s/dev/apps.yaml) is a catch-all with no host restriction, so
+    # any Host header lands on the frontend Service, whose nginx.conf serves
+    # a dedicated `location = /healthz` returning a bare 200. No dedicated
+    # Ingress health route is needed.
     path    = "/healthz"
     matcher = "200"
   }
