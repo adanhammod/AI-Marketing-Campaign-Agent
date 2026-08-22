@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from campaign_worker.video.audio_mix import AudioMixRequest, SfxCue, build_audio_mix_args
+from campaign_worker.video.audio_mix import _MUSIC_DUCK_GAIN, AudioMixRequest, SfxCue, build_audio_mix_args
 
 
 def test_raises_when_neither_voiceover_nor_music_given():
@@ -155,3 +155,104 @@ def test_sfx_cues_are_gained_down_relative_to_the_music_bed_to_avoid_overpowerin
     bed_gain = float(bed_chain.split("volume=")[1].split(":")[0].split(",")[0])
     sfx_gain = float(sfx_chain.split("volume=")[1].split(":")[0].split(",")[0])
     assert sfx_gain < bed_gain
+
+
+# ---------------------------------------------------------------------------
+# Combined voiceover + music (VOICEOVER_AD with music available)
+# ---------------------------------------------------------------------------
+
+
+def _combined_request(**overrides) -> AudioMixRequest:
+    defaults = dict(
+        duration_seconds=15.0,
+        music_path=Path("/tmp/music.wav"),
+        voiceover_path=Path("/tmp/voiceover.mp3"),
+    )
+    defaults.update(overrides)
+    return AudioMixRequest(**defaults)
+
+
+def test_combined_mix_sends_both_voiceover_and_music_as_ffmpeg_inputs():
+    args = build_audio_mix_args(_combined_request(), Path("/tmp/mixed.aac"))
+
+    assert args.count("-i") == 2
+    inputs = [args[i + 1] for i, token in enumerate(args) if token == "-i"]
+    assert inputs == ["/tmp/voiceover.mp3", "/tmp/music.wav"]
+
+
+def test_combined_mix_loops_the_music_input_but_not_the_voiceover_input():
+    args = build_audio_mix_args(_combined_request(), Path("/tmp/mixed.aac"))
+
+    assert args.count("-stream_loop") == 1
+    loop_index = args.index("-stream_loop")
+    assert args[loop_index + 1] == "-1"
+    assert args[loop_index + 2] == "-i"
+    assert args[loop_index + 3] == "/tmp/music.wav"
+
+
+def test_combined_mix_voiceover_chain_has_no_gain_reduction():
+    # "Preserve the complete voiceover" / "stays at normal level": the
+    # voiceover's own filter chain must only trim to duration, never apply
+    # a volume filter.
+    args = build_audio_mix_args(_combined_request(), Path("/tmp/mixed.aac"))
+    filter_complex = args[args.index("-filter_complex") + 1]
+    voice_chain = next(chain for chain in filter_complex.split(";") if chain.endswith("[voice]"))
+
+    assert voice_chain == "[0:a]atrim=0:15.000[voice]"
+    assert "volume=" not in voice_chain
+
+
+def test_combined_mix_music_is_ducked_to_the_configured_gain():
+    args = build_audio_mix_args(_combined_request(), Path("/tmp/mixed.aac"))
+    filter_complex = args[args.index("-filter_complex") + 1]
+    music_chain = next(chain for chain in filter_complex.split(";") if chain.endswith("[music]"))
+
+    assert f"volume={_MUSIC_DUCK_GAIN}" in music_chain
+    assert _MUSIC_DUCK_GAIN == pytest.approx(0.15)
+    assert 0.10 <= _MUSIC_DUCK_GAIN <= 0.20
+
+
+def test_combined_mix_keeps_the_existing_fade_envelope_on_the_music_bed():
+    args = build_audio_mix_args(_combined_request(duration_seconds=15.0), Path("/tmp/mixed.aac"))
+    filter_complex = args[args.index("-filter_complex") + 1]
+    music_chain = next(chain for chain in filter_complex.split(";") if chain.endswith("[music]"))
+
+    assert "afade=t=in:d=0.5" in music_chain
+    assert "afade=t=out:st=14.500:d=0.5" in music_chain
+    # No fade on the voiceover chain.
+    voice_chain = next(chain for chain in filter_complex.split(";") if chain.endswith("[voice]"))
+    assert "afade" not in voice_chain
+
+
+def test_combined_mix_uses_amix_with_normalize_disabled():
+    args = build_audio_mix_args(_combined_request(), Path("/tmp/mixed.aac"))
+    filter_complex = args[args.index("-filter_complex") + 1]
+
+    assert "[voice][music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]" in filter_complex
+    assert args[args.index("-map") + 1] == "[out]"
+
+
+def test_music_only_amix_path_is_unaffected_by_normalize_flag():
+    # Regression guard: CINEMATIC_TEXT_AD's existing music(+SFX) amix call
+    # must not gain a normalize token as a side effect of the new combined
+    # path -- its filter string stays exactly as it was before this change.
+    request = AudioMixRequest(
+        duration_seconds=15.0,
+        music_path=Path("/tmp/music.wav"),
+        voiceover_path=None,
+        sfx_cues=[SfxCue(path=Path("/tmp/whoosh.wav"), start_seconds=5.0)],
+    )
+    args = build_audio_mix_args(request, Path("/tmp/mixed.aac"))
+    filter_complex = args[args.index("-filter_complex") + 1]
+
+    assert "normalize" not in filter_complex
+    assert "[bed][sfx1]amix=inputs=2:duration=first:dropout_transition=0[out]" in filter_complex
+
+
+def test_voiceover_only_path_still_has_no_normalize_or_amix_token():
+    request = AudioMixRequest(duration_seconds=15.0, music_path=None, voiceover_path=Path("/tmp/voiceover.mp3"))
+    args = build_audio_mix_args(request, Path("/tmp/mixed.aac"))
+    filter_complex = args[args.index("-filter_complex") + 1]
+
+    assert "amix" not in filter_complex
+    assert "normalize" not in filter_complex
