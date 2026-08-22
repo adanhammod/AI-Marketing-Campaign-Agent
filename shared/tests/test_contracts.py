@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import UUID
 import pytest
 from pydantic import ValidationError
-from campaign_contracts.api import ApprovalRequest, CampaignCreationRequest, RevisionRequest
+from campaign_contracts.api import CampaignCreationRequest, RevisionRequest
 from campaign_contracts.artifacts import ArtifactReference
 from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignVersion, assert_version_immutable, earliest_regeneration_step, validate_approval_target
 from campaign_contracts.dynamodb import approval_sk,event_sk,meta_sk,pk,serialize_event,serialize_meta,serialize_step,serialize_version,step_sk,version_sk
@@ -27,8 +27,8 @@ def test_invalid_sqs(name):
 def test_duplicate_delivery_key():
     a=SQSJobMessage.model_validate(load(VALID/'sqs-start.json')); b=SQSJobMessage.model_validate(load(VALID/'sqs-duplicate-delivery.json')); assert duplicate_delivery_key(a)==duplicate_delivery_key(b)
 def test_api_fixtures():
-    CampaignCreationRequest.model_validate(load(VALID/'api-create.json')); ApprovalRequest.model_validate(load(VALID/'api-approval.json')); RevisionRequest.model_validate(load(VALID/'api-revision.json'))
-    for model,name in [(CampaignCreationRequest,'api-create'),(ApprovalRequest,'api-approval'),(RevisionRequest,'api-revision')]:
+    CampaignCreationRequest.model_validate(load(VALID/'api-create.json')); RevisionRequest.model_validate(load(VALID/'api-revision.json'))
+    for model,name in [(CampaignCreationRequest,'api-create'),(RevisionRequest,'api-revision')]:
         with pytest.raises(ValidationError): model.model_validate(load(INVALID/f'{name}.json'))
 def test_artifact_and_events():
     ArtifactReference.model_validate(load(VALID/'artifacts.json')[0]); events=[CampaignEvent.model_validate(x) for x in load(VALID/'events.json')]; validate_event_progress(events)

@@ -1,7 +1,7 @@
 import asyncio
 from uuid import uuid4
 
-from campaign_contracts.campaign import RetryMetadata, ReviewPackage
+from campaign_contracts.campaign import RetryMetadata
 from campaign_contracts.enums import CampaignStatus, WorkflowStep
 
 
@@ -12,14 +12,6 @@ def _events(client, campaign_id, cursor=None, limit=None):
     if limit is not None:
         params["limit"] = limit
     return client.get(f"/api/v1/campaigns/{campaign_id}/events", params=params)
-
-
-def _approve(client, campaign_id, version, checksum, headers, note=None):
-    return client.post(
-        f"/api/v1/campaigns/{campaign_id}/versions/{version}/approve",
-        json={"review_manifest_checksum": checksum, "note": note},
-        headers=headers,
-    )
 
 
 def _cancel(client, campaign_id, version, reason, headers):
@@ -49,17 +41,6 @@ def test_create_emits_campaign_created(client, valid_request, headers):
 
     assert [e["event_type"] for e in body["items"]] == ["CAMPAIGN_CREATED"]
     assert body["items"][0]["event_sequence"] == 1
-    assert body["latest_sequence"] == 1
-
-
-def test_approve_emits_approved(client, ready_for_review_campaign, approval_checksum, headers):
-    campaign_id, _ = asyncio.run(ready_for_review_campaign())
-
-    response = _approve(client, campaign_id, 1, approval_checksum, headers)
-    assert response.status_code == 202
-
-    body = _events(client, campaign_id).json()
-    assert [e["event_type"] for e in body["items"]] == ["APPROVED"]
     assert body["latest_sequence"] == 1
 
 
@@ -116,44 +97,26 @@ def test_revision_emits_revision_requested(client, campaign_at_status, headers):
 
 
 def test_event_sequence_continues_monotonically_and_gaplessly_from_existing_value(
-    client, repository, campaign_at_status, approval_checksum, headers
+    client, repository, campaign_at_status, headers
 ):
-    campaign_id, _ = asyncio.run(
-        campaign_at_status(
-            CampaignStatus.READY_FOR_REVIEW,
-            review_package=ReviewPackage(
-                artifact_id=uuid4(), manifest_checksum=approval_checksum, artifact_ids=[uuid4()]
-            ),
-        )
-    )
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.READY_FOR_REVIEW))
     record = asyncio.run(repository.get(campaign_id))
     assert record is not None
     aggregate, version = record
     bumped_aggregate = aggregate.model_copy(update={"event_sequence": 5})
     asyncio.run(repository.replace_current(bumped_aggregate, version))
 
-    response = _approve(client, campaign_id, 1, approval_checksum, headers)
-    assert response.status_code == 202
+    response = _cancel(client, campaign_id, 1, "no longer needed", headers)
+    assert response.status_code == 200
 
     body = _events(client, campaign_id).json()
     assert body["items"][0]["event_sequence"] == 6  # continues from 5, no gap, no reset to 1
-    assert body["latest_sequence"] == 6
+    assert body["latest_sequence"] == 7  # CANCEL_REQUESTED (6) + CANCELLED (7)
 
 
 # ---------------------------------------------------------------------------
 # Replay must not duplicate events or re-increment event_sequence
 # ---------------------------------------------------------------------------
-
-
-def test_approve_replay_does_not_duplicate_event(client, ready_for_review_campaign, approval_checksum, headers):
-    campaign_id, _ = asyncio.run(ready_for_review_campaign())
-    _approve(client, campaign_id, 1, approval_checksum, headers)
-
-    _approve(client, campaign_id, 1, approval_checksum, headers)
-
-    body = _events(client, campaign_id).json()
-    assert len(body["items"]) == 1
-    assert body["latest_sequence"] == 1
 
 
 def test_cancel_replay_does_not_duplicate_event(client, campaign_at_status, headers):
@@ -190,10 +153,10 @@ def test_revision_replay_does_not_duplicate_event(client, campaign_at_status, he
     assert body["latest_sequence"] == 1
 
 
-def test_failed_mutation_does_not_append_event(client, ready_for_review_campaign, headers):
-    campaign_id, _ = asyncio.run(ready_for_review_campaign())
+def test_failed_mutation_does_not_append_event(client, campaign_at_status, headers):
+    campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.CREATED))
 
-    response = _approve(client, campaign_id, 1, "b" * 64, headers)  # wrong checksum
+    response = _revise(client, campaign_id, 1, headers)  # CREATED is not revisable
     assert response.status_code == 409
 
     body = _events(client, campaign_id).json()

@@ -266,21 +266,42 @@ describe('CampaignDetailPage', () => {
     expect(document.querySelector('video')).toHaveAttribute('src', 'https://cdn.example/final.mp4')
   })
 
-  it('only shows the review actions card when the campaign is READY_FOR_REVIEW', async () => {
+  it('only shows the campaign package card when the campaign is FINAL', async () => {
     mockDetail(baseDetail({ status: 'GENERATING_IMAGES', current_step: 'images' }))
     renderDetailPage()
 
     await screen.findByRole('heading', { name: 'Luna Coffee: Luna Cold Brew' })
-    expect(screen.queryByRole('heading', { name: 'Ready for review' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Campaign ready' })).not.toBeInTheDocument()
   })
 
-  it('shows the review actions card, with non-functional buttons, once READY_FOR_REVIEW', async () => {
-    mockDetail(baseDetail({ status: 'READY_FOR_REVIEW', current_step: null }))
+  it('shows a working download link for the final package once the campaign is FINAL', async () => {
+    mockDetail(
+      baseDetail({
+        status: 'FINAL',
+        current_step: null,
+        artifacts: [{ artifact_id: 'a4', artifact_type: 'FINAL_PACKAGE' }],
+      }),
+    )
+    mockArtifacts([
+      {
+        artifact_id: 'a4',
+        artifact_type: 'FINAL_PACKAGE',
+        workflow_step: 'package',
+        campaign_id: CAMPAIGN_ID,
+        campaign_version: 1,
+        mime_type: 'application/zip',
+        size_bytes: 1,
+        checksum_sha256: 'x',
+        created_at: now,
+        download_url: 'https://cdn.example/final-package.zip',
+      },
+    ])
     renderDetailPage()
 
-    expect(await screen.findByRole('heading', { name: 'Ready for review' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Approve campaign' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Request changes' })).toBeDisabled()
+    expect(await screen.findByRole('heading', { name: 'Campaign ready' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('link', { name: 'Download campaign package' }),
+    ).toHaveAttribute('href', 'https://cdn.example/final-package.zip')
   })
 
   it("marks the specific failed step's card as failed using error.workflow_step", async () => {

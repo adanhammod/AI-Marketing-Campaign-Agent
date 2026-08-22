@@ -14,8 +14,6 @@ class CampaignListResponse(UTCModel): items:list[CampaignSummary]; next_cursor:s
 class CampaignDetailResponse(PublicCampaignVersion): title:str; current_version:int=Field(ge=1); latest_final_version:int|None=Field(default=None,ge=1); event_sequence:int=Field(ge=0); review_manifest_checksum:str|None=Field(default=None,pattern=r"^[0-9a-f]{64}$"); actions:dict[str,str]=Field(default_factory=dict)
 class CampaignEventsResponse(UTCModel): campaign_id:UUID; campaign_version:int=Field(ge=1); items:list[CampaignEvent]; next_cursor:str|None=None; latest_sequence:int=Field(ge=0); terminal:bool
 class CampaignArtifactsResponse(UTCModel): campaign_id:UUID; campaign_version:int=Field(ge=1); items:list[PublicArtifactReference]
-class ApprovalRequest(UTCModel): review_manifest_checksum:str=Field(pattern=r"^[0-9a-f]{64}$"); note:str|None=Field(default=None,max_length=500)
-class ApprovalResponse(UTCModel): campaign_id:UUID; campaign_version:int=Field(ge=1); approval_id:UUID; status:CampaignStatus; job_id:UUID
 class RevisionRequest(UTCModel):
     reason:str=Field(min_length=1,max_length=1000); scope:RevisionTarget; affected_artifact_ids:list[UUID]=Field(default_factory=list)
     @model_validator(mode="after")
@@ -28,4 +26,4 @@ class RetryRequest(UTCModel): pass
 class RetryResponse(UTCModel): campaign_id:UUID; campaign_version:int=Field(ge=1); job_id:UUID; status:CampaignStatus; resume_step:WorkflowStep; attempt:int=Field(ge=1)
 class CancellationRequest(UTCModel): reason:str=Field(min_length=1,max_length=500)
 class CancellationResponse(UTCModel): campaign_id:UUID; campaign_version:int=Field(ge=1); status:CampaignStatus; cancellation_pending:bool=False
-__all__=["CampaignCreationRequest","CampaignCreationAcceptedResponse","CampaignListResponse","CampaignDetailResponse","CampaignEventsResponse","CampaignArtifactsResponse","ApprovalRequest","ApprovalResponse","RevisionRequest","RevisionResponse","RetryRequest","RetryResponse","CancellationRequest","CancellationResponse","StandardValidationError","ConflictError","NotFoundError"]
+__all__=["CampaignCreationRequest","CampaignCreationAcceptedResponse","CampaignListResponse","CampaignDetailResponse","CampaignEventsResponse","CampaignArtifactsResponse","RevisionRequest","RevisionResponse","RetryRequest","RetryResponse","CancellationRequest","CancellationResponse","StandardValidationError","ConflictError","NotFoundError"]

@@ -73,23 +73,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/campaigns/{campaign_id}/versions/{version}/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Approve Campaign */
-        post: operations["approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/campaigns/{campaign_id}/versions/{version}/cancel": {
         parameters: {
             query?: never;
@@ -244,34 +227,6 @@ export interface components {
             manifest_checksum: string;
             /** Note */
             note?: string | null;
-        };
-        /** ApprovalRequest */
-        ApprovalRequest: {
-            /** Note */
-            note?: string | null;
-            /** Review Manifest Checksum */
-            review_manifest_checksum: string;
-        };
-        /** ApprovalResponse */
-        ApprovalResponse: {
-            /**
-             * Approval Id
-             * Format: uuid
-             */
-            approval_id: string;
-            /**
-             * Campaign Id
-             * Format: uuid
-             */
-            campaign_id: string;
-            /** Campaign Version */
-            campaign_version: number;
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            status: components["schemas"]["CampaignStatus"];
         };
         /** ArtifactAttribution */
         ArtifactAttribution: {
@@ -1052,71 +1007,6 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StandardValidationError"];
-                };
-            };
-        };
-    };
-    approve_campaign_api_v1_campaigns__campaign_id__versions__version__approve_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                campaign_id: string;
-                version: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApprovalRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApprovalResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NotFoundError"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConflictError"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StandardValidationError"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
                 headers: {
                     [name: string]: unknown;
                 };

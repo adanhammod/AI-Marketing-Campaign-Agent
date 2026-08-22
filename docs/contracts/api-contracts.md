@@ -46,7 +46,7 @@ Common behavior: malformed JSON `400`; schema errors `422`; unknown campaign `40
 
 Extends summary with normalized `brief`, `constraints`, exact current `version`, nullable `strategy`, `copy`, `storyboard`, public artifact summaries, safe `revision`, safe `approval`, `completed_steps`, `retry_eligible`, sanitized `error`, `event_sequence`, a nullable `review_manifest_checksum`, and action links. It never contains S3 bucket/key, lease data, receipt handles, raw provider responses, full private prompt history, or stored presigned URLs.
 
-`review_manifest_checksum` is the exact value the client must echo back as `ApprovalRequest.review_manifest_checksum` to approve the version. It is populated deterministically (given the same persisted image/video artifact IDs) once the version reaches `READY_FOR_REVIEW`, and is `null` beforehand.
+`review_manifest_checksum` is populated deterministically (given the same persisted image/video artifact IDs) once the version reaches `READY_FOR_REVIEW`, and is `null` beforehand. There is no human approval step that consumes it via the API; the worker proceeds straight to packaging in the same processing pass. It remains on the response as a durable record of the review manifest's identity.
 
 ## `POST /campaigns`
 
@@ -168,25 +168,13 @@ Once a version reaches `FINAL`, its download archive is also exposed as an artif
 `artifact_type: "FINAL_PACKAGE"`, `mime_type: "application/zip"`, and no `scene_number`/`attribution`, signed the
 same way as the other artifact types. The archive itself (`campaign-v{version}/strategy.json`, `copy.json`,
 `storyboard.json`, `images/scene-{1,2,3}.jpg`, `audio/voiceover.mp3`, `video/final.mp4`, `manifest.json`) is built
-and stored by the worker as part of the `RESUME` → `PACKAGE` step, before the version transitions to `FINAL`.
+and stored by the worker as part of the `PACKAGE` step, which now runs automatically -- no human approval action --
+immediately after `READY_FOR_REVIEW`, in the same processing pass, before the version transitions to `FINAL`.
 
-## `POST /campaigns/{campaign_id}/versions/{version}/approve`
-
-Request:
-
-```json
-{"review_manifest_checksum": "64 lowercase hex", "note": null}
-```
-
-Preconditions: exact version is current and `READY_FOR_REVIEW`; manifest checksum matches; no approval exists.
-
-Success `202`:
-
-```json
-{"campaign_id": "uuid", "campaign_version": 1, "approval_id": "uuid", "status": "APPROVED", "job_id": "uuid"}
-```
-
-FastAPI transactionally creates approval and status/event, then queues `RESUME` for final packaging. Unknown: `404`; stale/non-current/checksum mismatch/illegal status: `409`; invalid note/checksum: `422`.
+There is no `POST /campaigns/{campaign_id}/versions/{version}/approve` endpoint. Campaigns complete automatically;
+no human approval action exists in the API. (A standalone `RESUME` SQS operation still exists in the worker as a
+manual escape hatch for campaigns that reached `READY_FOR_REVIEW`/`APPROVED` before this behavior shipped, but it
+has no corresponding API endpoint.)
 
 ## `POST /campaigns/{campaign_id}/versions/{version}/revisions`
 
@@ -203,7 +191,7 @@ Request:
 
 `scope`: `STRATEGY|COPY|STORYBOARD|SELECTED_IMAGES|VIDEO`. Selected images require valid affected image IDs; other scopes reject them.
 
-Precondition: exact current version is `READY_FOR_REVIEW`. Success `202`:
+Precondition: exact current version is `READY_FOR_REVIEW` or `FINAL` (campaigns complete automatically, so revision must remain available on a finished campaign, not just the brief pre-completion window). When the source is `FINAL`, the parent version's own record is never rewritten -- it stays exactly as finalized, immutable -- only the new child version and an audit event are written. Success `202`:
 
 ```json
 {

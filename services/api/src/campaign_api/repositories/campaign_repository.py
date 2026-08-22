@@ -2,7 +2,7 @@ import builtins
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from campaign_contracts.campaign import ApprovalRecord, CampaignAggregateMetadata, CampaignVersion
+from campaign_contracts.campaign import CampaignAggregateMetadata, CampaignVersion
 from campaign_contracts.events import CampaignEvent
 
 
@@ -26,14 +26,6 @@ class CampaignRepository(ABC):
     @abstractmethod
     async def replace_current(self, aggregate: CampaignAggregateMetadata, version: CampaignVersion) -> None: ...
     @abstractmethod
-    async def approve(
-        self,
-        aggregate: CampaignAggregateMetadata,
-        version: CampaignVersion,
-        approval: ApprovalRecord,
-        events: builtins.list[CampaignEvent],
-    ) -> None: ...
-    @abstractmethod
     async def cancel(
         self, aggregate: CampaignAggregateMetadata, version: CampaignVersion, events: builtins.list[CampaignEvent]
     ) -> None: ...
@@ -45,10 +37,14 @@ class CampaignRepository(ABC):
     async def revise(
         self,
         aggregate: CampaignAggregateMetadata,
-        parent_version: CampaignVersion,
+        parent_version: CampaignVersion | None,
         child_version: CampaignVersion,
         events: builtins.list[CampaignEvent],
-    ) -> None: ...
+    ) -> None:
+        """Persist a revision. parent_version=None means the parent version's own
+        item must not be written at all (e.g. a FINAL parent stays immutable) --
+        only aggregate meta, the new child version, and events are written."""
+        ...
     @abstractmethod
     async def rollback_initial(self, campaign_id: UUID, events: builtins.list[CampaignEvent]) -> None: ...
     @abstractmethod

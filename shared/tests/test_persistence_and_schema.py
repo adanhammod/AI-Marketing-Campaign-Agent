@@ -23,7 +23,7 @@ def test_keys_and_serialization(tmp_path):
     step_record=WorkflowStepRecord(campaign_id=cid,campaign_version=1,step=WorkflowStep.COPY,status=StepStatus.SUCCEEDED,attempt=1,created_at=now,updated_at=now); assert serialize_step(step_record)['attempt']==Decimal(1) and serialize_step(step_record)['SK']=='STEP#1#copy'
     with pytest.raises(TypeError):_ddb(1.2)
 def test_event_serialize_and_schema_stability(tmp_path):
-    event=CampaignEvent.model_validate(load('events.json')[0]); assert serialize_event(event)['SK'].startswith('EVENT#'); first=generate(tmp_path); snapshots={p.name:p.read_bytes() for p in first}; second=generate(tmp_path); assert snapshots=={p.name:p.read_bytes() for p in second}; assert len(first)==8
+    event=CampaignEvent.model_validate(load('events.json')[0]); assert serialize_event(event)['SK'].startswith('EVENT#'); first=generate(tmp_path); snapshots={p.name:p.read_bytes() for p in first}; second=generate(tmp_path); assert snapshots=={p.name:p.read_bytes() for p in second}; assert len(first)==len(SCHEMAS)
 def test_ddb_converts_http_url_to_string():
     converted=_ddb(HttpUrl('https://www.pexels.com/@creator'))
     assert converted=='https://www.pexels.com/@creator'

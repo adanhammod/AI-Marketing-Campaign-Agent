@@ -40,9 +40,9 @@ Unknown fields are rejected: the schema is closed within schema version 1 (the e
 
 Operation rules:
 
-- `START`: command metadata must describe a newly created version; by consumption time the worker requires that version to be `QUEUED`.
-- `RESUME`: version must be `FAILED` with `retry.retryable=true`, or `APPROVED` awaiting package finalization.
-- `REGENERATE`: version must be a new child in `QUEUED` with revision metadata and earliest affected step.
+- `START`: command metadata must describe a newly created version; by consumption time the worker requires that version to be `QUEUED`. No human approval step exists: once a `START`/`REGENERATE` run reaches `READY_FOR_REVIEW`, the worker continues automatically, in the same processing pass, straight through packaging to `FINAL`.
+- `RESUME`: version must be `FAILED` with `retry.retryable=true` and `resume_step=PACKAGE`, or legacy `APPROVED` awaiting package finalization. `RESUME` is not part of the normal completion path anymore -- it is used only for retrying a failed packaging attempt, or as a manual escape hatch for a version that was already `READY_FOR_REVIEW`/`APPROVED` before this behavior shipped.
+- `REGENERATE`: version must be a new child in `QUEUED` with revision metadata and earliest affected step. Also reaches `FINAL` automatically, same as `START`.
 
 The API sets `CREATED -> QUEUED` when durable send succeeds. Therefore workers normally observe `QUEUED`; operation preconditions are verified against persisted command metadata, not trusted from the message alone.
 
