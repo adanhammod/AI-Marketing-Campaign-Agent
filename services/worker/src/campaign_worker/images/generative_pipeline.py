@@ -52,7 +52,7 @@ def generative_scene_fingerprint(
     output_format: str,
 ) -> str:
     # Per-scene (not whole-version like the stock/video fingerprints) so
-    # editing one scene's visual_prompt only re-spends Stability credit on
+    # editing one scene's visual_prompt only re-spends generation cost on
     # that scene. The payload shape (model/aspect_ratio/generation_version
     # keys) never overlaps with the stock pipeline's {brief, storyboard}
     # payload, so a Pexels artifact can never satisfy this reconcile check
@@ -122,7 +122,7 @@ class GenerativeImagePipeline:
                 if stored[scene.scene_number] is not None:
                     continue
                 await self._checkpoint(is_cancelled, "between_scenes")
-                await self._checkpoint(is_cancelled, "before_stability_generate")
+                await self._checkpoint(is_cancelled, "before_generate")
                 prompt = prompts[scene.scene_number]
                 generated = await self._stability.generate(prompt.positive, prompt.negative)
                 await self._checkpoint(is_cancelled, "before_image_processing")
@@ -135,7 +135,7 @@ class GenerativeImagePipeline:
                     "storyboard_fingerprint": fingerprints[scene.scene_number],
                     "normalized_checksum": image.checksum_sha256,
                     "source_checksum": image.source_checksum_sha256,
-                    "provider": "stability-ai",
+                    "provider": "cloudflare-workers-ai",
                     "model": self._model,
                     "aspect_ratio": self._aspect_ratio,
                     "output_format": self._output_format,
@@ -180,5 +180,5 @@ class GenerativeImagePipeline:
             scene_number=scene_number,
             attribution=None,
             created_at=stored.created_at,
-            provider="stability-ai",
+            provider="cloudflare-workers-ai",
         )

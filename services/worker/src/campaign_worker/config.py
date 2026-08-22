@@ -21,6 +21,18 @@ class Settings:
     image_max_download_bytes: int = 25_000_000
     image_provider_mode: str = "generative"
     image_pexels_fallback_enabled: bool = True
+    # Cloudflare Workers AI (FLUX) is the active generative image provider.
+    cloudflare_account_id: str | None = None
+    cloudflare_api_token: str | None = None
+    cloudflare_flux_model: str = "@cf/black-forest-labs/flux-1-schnell"
+    cloudflare_flux_steps: int = 4
+    # flux-1-schnell has no aspect-ratio request parameter -- this is
+    # descriptive-only, used for cache-fingerprint/metadata parity with the
+    # stock pipeline, never sent to Cloudflare's API.
+    cloudflare_flux_aspect_ratio: str = "1:1"
+    cloudflare_http_timeout_seconds: float = 30
+    # Stability AI client/config are kept, unused, for rollback -- see
+    # providers/stability_client.py. Not read by build_consumer() any more.
     stability_api_key: str | None = None
     stability_image_model: str = "sd3.5-large"
     stability_image_aspect_ratio: str = "9:16"
@@ -97,14 +109,17 @@ class Settings:
             raise ConfigurationError("Pexels API key is required for stock mode or when fallback is enabled")
         if needs_pexels and not 1 <= self.pexels_candidate_count <= 40:
             raise ConfigurationError("Pexels candidate count must be between 1 and 40")
-        # Stability is a hard dependency of generative mode -- fail fast at
-        # startup rather than masking a missing key as a per-job "transient
-        # provider failure" once the pipeline starts falling back to Pexels.
+        # Cloudflare is a hard dependency of generative mode -- fail fast at
+        # startup rather than masking missing credentials as a per-job
+        # "transient provider failure" once the pipeline starts falling back
+        # to Pexels.
         if self.image_provider_mode == "generative":
-            if not self.stability_api_key:
-                raise ConfigurationError("Stability API key is required when IMAGE_PROVIDER_MODE=generative")
-            if self.stability_http_timeout_seconds <= 0:
-                raise ConfigurationError("Stability HTTP timeout must be positive")
+            if not self.cloudflare_account_id or not self.cloudflare_api_token:
+                raise ConfigurationError(
+                    "Cloudflare account ID and API token are required when IMAGE_PROVIDER_MODE=generative"
+                )
+            if self.cloudflare_http_timeout_seconds <= 0:
+                raise ConfigurationError("Cloudflare HTTP timeout must be positive")
         if self.image_http_timeout_seconds <= 0:
             raise ConfigurationError("image HTTP timeout must be positive")
         if self.image_max_download_bytes < 1:
@@ -157,6 +172,12 @@ class Settings:
             image_max_download_bytes=int(os.getenv("IMAGE_MAX_DOWNLOAD_BYTES", "25000000")),
             image_provider_mode=os.getenv("IMAGE_PROVIDER_MODE", "generative"),
             image_pexels_fallback_enabled=os.getenv("IMAGE_PEXELS_FALLBACK_ENABLED", "true").lower() == "true",
+            cloudflare_account_id=os.getenv("CLOUDFLARE_ACCOUNT_ID"),
+            cloudflare_api_token=os.getenv("CLOUDFLARE_API_TOKEN"),
+            cloudflare_flux_model=os.getenv("CLOUDFLARE_FLUX_MODEL", "@cf/black-forest-labs/flux-1-schnell"),
+            cloudflare_flux_steps=int(os.getenv("CLOUDFLARE_FLUX_STEPS", "4")),
+            cloudflare_flux_aspect_ratio=os.getenv("CLOUDFLARE_FLUX_ASPECT_RATIO", "1:1"),
+            cloudflare_http_timeout_seconds=float(os.getenv("CLOUDFLARE_HTTP_TIMEOUT_SECONDS", "30")),
             stability_api_key=os.getenv("STABILITY_API_KEY"),
             stability_image_model=os.getenv("STABILITY_IMAGE_MODEL", "sd3.5-large"),
             stability_image_aspect_ratio=os.getenv("STABILITY_IMAGE_ASPECT_RATIO", "9:16"),
