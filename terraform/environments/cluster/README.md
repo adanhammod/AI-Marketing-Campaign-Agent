@@ -4,10 +4,24 @@ This root creates the VPC, ALB, kubeadm instances/worker ASG, three ECR
 repositories, and the GitHub image-delivery OIDC role. Application DynamoDB,
 S3, SQS, and runtime IAM policies remain environment-owned.
 
-Required operator values:
+External access to the application is: ALB (port 80, public) -> Target Group
+-> worker NodePort 30080 -> ingress-nginx (deployed inside the cluster via
+GitOps, `infra/k8s/ingress-nginx`) -> Kubernetes Ingress -> frontend/API
+ClusterIP Services. The worker NodePort (30080 HTTP, 30443 HTTPS reserved for
+future TLS) is reachable only from the ALB security group -- never directly
+from the internet; see `terraform/modules/kubeadm-cluster/main.tf`
+(`aws_security_group.worker_ingress`), which is attached to every worker via
+the launch template so it applies automatically to ASG replacement instances
+too. Worker nodes have no Elastic IP, but since the ALB (not the worker's own
+public IP) is the entry point, a worker being replaced by the ASG has no
+user-visible effect on the public URL.
 
-- dev_alb_allowed_cidr: CIDR allowed to reach the private-demo ALB on port 80
-  (application traffic only)
+The ALB's HTTP (port 80) ingress is intentionally hardcoded to `0.0.0.0/0` in
+`aws_security_group.alb` (`terraform/modules/kubeadm-cluster/main.tf`) —
+**the dev/demo ALB HTTP endpoint is publicly reachable from the internet by
+design**, so it never needs an operator CIDR updated when a home IP changes.
+This has no effect on SSH, the Kubernetes API, or the worker NodePort, which
+stay reachable only from inside the VPC / from the ALB security group.
 
 Optional operator values:
 
