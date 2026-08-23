@@ -101,7 +101,11 @@ jobs:
 
           NS_B64=$(cat infra/k8s/namespaces/dev.yaml; echo ---; cat infra/k8s/namespaces/prod.yaml)
           NS_B64=$(printf '%s' "$NS_B64" | base64 -w0)
-          APPS_B64=$(base64 -w0 infra/k8s/argocd/applications.yaml)
+          # App-of-Apps: this is the ONLY Argo CD Application object ever applied
+          # directly by this bootstrap. It in turn manages every Application under
+          # infra/k8s/argocd/applications/ from Git -- see
+          # infra/k8s/argocd/root-application.yaml for why this can't recurse.
+          ROOT_APP_B64=$(base64 -w0 infra/k8s/argocd/root-application.yaml)
 
           {
             # AWS-RunShellScript executes the assembled commands via /bin/sh,
@@ -114,7 +118,7 @@ jobs:
             # set -euo pipefail once it reads its stdin.
             echo "bash <<'ARGOCD_BOOTSTRAP_EOF'"
             printf 'NS_B64=%q\n' "$NS_B64"
-            printf 'APPS_B64=%q\n' "$APPS_B64"
+            printf 'ROOT_APP_B64=%q\n' "$ROOT_APP_B64"
             cat <<'REMOTE_SCRIPT'
           set -euo pipefail
           export KUBECONFIG=/home/ubuntu/.kube/config
@@ -153,8 +157,8 @@ jobs:
             exit 1
           fi
 
-          echo "=== applying Argo CD Applications ==="
-          echo "$APPS_B64" | base64 -d | kubectl apply -f -
+          echo "=== applying Argo CD root Application (App-of-Apps bootstrap) ==="
+          echo "$ROOT_APP_B64" | base64 -d | kubectl apply -f -
 
           echo "=== verification: nodes ==="
           kubectl get nodes
