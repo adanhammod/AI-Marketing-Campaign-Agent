@@ -17,6 +17,7 @@ data "aws_iam_policy_document" "terraform_bootstrap_route53" {
     actions = [
       "route53:GetHostedZone",
       "route53:ListResourceRecordSets",
+      "route53:ListTagsForResource",
     ]
     resources = ["arn:aws:route53:::hostedzone/Z0068791177VM3T59WYDS"]
   }
