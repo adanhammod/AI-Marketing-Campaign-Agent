@@ -124,6 +124,7 @@ class SQSConsumer:
                 "delivery_retry_exhausted",
                 extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)},
             )
+            await self._mark_exhausted_campaign_failed(message)
             return MessageOutcome.RETRY_EXHAUSTED
         version = await self._repository.load_version(message)
         if version is None:
@@ -171,6 +172,16 @@ class SQSConsumer:
             await self._repository.complete(message, lease, datetime.now(UTC))
         except (LeaseLost, PersistenceUnavailable, ProcessingUncertain):
             return MessageOutcome.UNCERTAIN
+        except Exception:
+            # A bug inside processor.process()/_fail()/handle_failure() itself (i.e. not one
+            # of the expected retryable errors above) must not crash the consumer loop
+            # silently -- leave the message for redelivery so it still converges on FAILED
+            # via the exhaustion path above once attempts run out, instead of vanishing.
+            _LOG.exception(
+                "unexpected_processing_error",
+                extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)},
+            )
+            return MessageOutcome.UNCERTAIN
         finally:
             stop.set()
             if not heartbeat.done():
@@ -180,6 +191,42 @@ class SQSConsumer:
         except ProcessingUncertain:
             return MessageOutcome.UNCERTAIN
         return MessageOutcome.ACKNOWLEDGED
+
+    async def _mark_exhausted_campaign_failed(self, message: SQSJobMessage) -> None:
+        """Best-effort terminal write for a message whose delivery attempts ran out.
+
+        This must never raise -- it runs on the same code path that ultimately lets the
+        message fall through to the DLQ, and record_exhausted() above already durably
+        marked the delivery as exhausted regardless of what happens here. Without this,
+        campaign.status is left exactly as it was found (often still QUEUED, error=None)
+        even though the job is never coming back.
+        """
+        try:
+            version = await self._repository.load_version(message)
+            if version is None:
+                return
+            now = datetime.now(UTC)
+            expires = now + timedelta(seconds=self._settings.visibility_timeout_seconds - 1)
+            try:
+                lease = await self._repository.acquire_lease(message, self._worker_id, now, expires)
+            except LeaseConflict:
+                _LOG.info(
+                    "exhausted_delivery_lease_conflict",
+                    extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)},
+                )
+                return
+            try:
+                await self._processor.fail_delivery_exhausted(version, lease, message.correlation_id)
+            finally:
+                try:
+                    await self._repository.release(message, lease)
+                except (LeaseLost, PersistenceUnavailable):
+                    pass
+        except Exception:
+            _LOG.exception(
+                "exhausted_delivery_failure_persistence_error",
+                extra={"campaign_id": str(message.campaign_id), "job_id": str(message.job_id)},
+            )
 
     async def _ack_without_processing(
         self, received: ReceivedMessage, message: SQSJobMessage, reason: str
