@@ -206,6 +206,18 @@ def build_consumer(
             creative_plan_provider=creative_plan_provider,
         )
     else:
+        # Outside local/test, silently falling back to mock providers would hide a
+        # completely unconfigured deployment (e.g. a forgotten campaign-secrets Secret)
+        # behind campaigns that "succeed" without ever calling a real provider -- fail
+        # fast instead, the same way validate_image_pipeline()/validate_voice_pipeline()
+        # above fail fast on a *partially* configured real pipeline.
+        if settings.environment not in {"local", "test"}:
+            raise ConfigurationError(
+                "no image/voice pipeline is configured: CAMPAIGN_ARTIFACT_BUCKET, "
+                "BEDROCK_IMAGE_QUERY_MODEL_ID, and either PEXELS_API_KEY or Cloudflare "
+                "credentials are all required outside local/test environments -- refusing "
+                "to silently run with mock providers in a deployed environment"
+            )
         processor = GraphJobProcessor(
             repository,
             MockImageProvider(),

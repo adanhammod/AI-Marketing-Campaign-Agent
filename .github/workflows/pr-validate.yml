@@ -2,14 +2,14 @@ name: PR validation
 on:
   pull_request:
 jobs:
-  validate:
+  terraform-and-docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
       - run: terraform fmt -check -recursive terraform
       - run: |
-          for root in terraform/environments/cluster terraform/environments/prod terraform/environments/terraform-state-bootstrap; do
+          for root in terraform/environments/cluster terraform/environments/dev terraform/environments/prod terraform/environments/terraform-state-bootstrap; do
             terraform -chdir="$root" init -backend=false
             terraform -chdir="$root" validate
           done
@@ -25,3 +25,66 @@ jobs:
           fi
           grep -Fq 'COPY services/worker/assets/music/cinematic.mp3 /app/assets/music/cinematic.mp3' services/worker/Dockerfile
           grep -Fq 'ENV CINEMATIC_MUSIC_PATH=/app/assets/music/cinematic.mp3' services/worker/Dockerfile
+      - name: Worker Docker build (placeholder music asset, never committed)
+        run: |
+          mkdir -p services/worker/assets/music
+          dd if=/dev/zero of=services/worker/assets/music/cinematic.mp3 bs=1024 count=1
+          docker build -f services/worker/Dockerfile -t campaign-agent-worker:pr .
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
+
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e shared -e "services/api[dev]"
+      - run: ruff check services/api/src services/api/tests
+      - run: mypy
+        working-directory: services/api
+      - run: pytest
+        working-directory: services/api
+
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e shared -e "services/worker[dev]"
+      # ruff/mypy are intentionally not gated here yet: services/worker currently has
+      # pre-existing lint/type violations unrelated to any single change (see the
+      # deployment-readiness report) that would need a dedicated cleanup pass before
+      # they can be made a required check without blocking unrelated PRs. Tracked as a
+      # follow-up; pytest is unaffected and already fully green.
+      - run: pytest
+        working-directory: services/worker
+
+  shared:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e "shared[dev]"
+      - run: pytest
+        working-directory: shared

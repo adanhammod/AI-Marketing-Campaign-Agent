@@ -1,0 +1,206 @@
+# Vanilla Prometheus (no Operator/CRDs) -- scrape targets are discovered directly via
+# Kubernetes service discovery: node-level cAdvisor metrics via the API server's node
+# proxy, and every pod carrying prometheus.io/scrape: "true" (worker, API,
+# kube-state-metrics, node-exporter -- see their pod-template annotations).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: prometheus, namespace: monitoring}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, nodes/metrics, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: prometheus}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: prometheus}
+subjects:
+  - {kind: ServiceAccount, name: prometheus, namespace: monitoring}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: prometheus-config, namespace: monitoring}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager:9093"]
+
+    rule_files:
+      - /etc/prometheus/rules/rules.yml
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      # Per-node CPU/memory/network container metrics, via the kubelet's cAdvisor
+      # endpoint proxied through the API server (the standard way to reach it without
+      # exposing kubelet ports directly).
+      - job_name: kubernetes-nodes-cadvisor
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+      # Any pod annotated prometheus.io/scrape: "true" -- covers the worker and API
+      # (/metrics), kube-state-metrics, and node-exporter. Adding a new scraped
+      # workload never requires touching this file, only its own pod annotations.
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+
+  rules.yml: |
+    groups:
+      - name: campaign-agent
+        rules:
+          - alert: ApiDeploymentUnavailable
+            expr: kube_deployment_status_replicas_available{deployment="campaign-agent-api"} == 0
+            for: 2m
+            labels: {severity: critical}
+            annotations: {summary: "campaign-agent-api has zero available replicas in {{ $labels.namespace }}"}
+
+          - alert: WorkerDeploymentUnavailable
+            expr: kube_deployment_status_replicas_available{deployment="campaign-agent-worker"} == 0
+            for: 2m
+            labels: {severity: critical}
+            annotations: {summary: "campaign-agent-worker has zero available replicas in {{ $labels.namespace }} (SQS consumer is not running)"}
+
+          - alert: FrontendDeploymentUnavailable
+            expr: kube_deployment_status_replicas_available{deployment="campaign-agent-frontend"} == 0
+            for: 2m
+            labels: {severity: warning}
+            annotations: {summary: "campaign-agent-frontend has zero available replicas in {{ $labels.namespace }}"}
+
+          - alert: WorkerTargetDown
+            expr: up{job="kubernetes-pods", app="campaign-agent-worker"} == 0
+            for: 2m
+            labels: {severity: critical}
+            annotations: {summary: "Prometheus cannot scrape the worker's /metrics endpoint in {{ $labels.namespace }}"}
+
+          - alert: HighPodRestartRate
+            expr: increase(kube_pod_container_status_restarts_total{namespace=~"dev|prod"}[15m]) > 3
+            labels: {severity: warning}
+            annotations: {summary: "{{ $labels.pod }} restarted more than 3 times in the last 15 minutes"}
+
+          - alert: HighPodMemoryUsage
+            expr: |
+              sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"dev|prod", container!=""})
+              / sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~"dev|prod", resource="memory"})
+              > 0.9
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "{{ $labels.pod }} is above 90% of its memory limit"}
+
+          - alert: HighPodCpuUsage
+            expr: |
+              sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~"dev|prod", container!=""}[5m]))
+              / sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~"dev|prod", resource="cpu"})
+              > 0.9
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "{{ $labels.pod }} is above 90% of its CPU limit"}
+
+          - alert: HighApiErrorRate
+            expr: |
+              sum(rate(http_requests_total{status=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total[5m]))
+              > 0.05
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "campaign-agent-api 5xx error rate is above 5% over the last 5 minutes"}
+
+          - alert: WorkerRetryExhaustionOccurred
+            expr: increase(worker_jobs_processed_total{outcome="retry_exhausted"}[15m]) > 0
+            labels: {severity: warning}
+            annotations: {summary: "A worker job exhausted all SQS delivery attempts in the last 15 minutes -- check the DLQ"}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels: {app: prometheus}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata: {labels: {app: prometheus}}
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # emptyDir storage (below) is ephemeral by design for this course-scoped
+            # deployment -- history is lost on pod restart. A short retention window
+            # keeps that limitation honest rather than pretending to retain more than
+            # the volume actually can. Upgrading to a PersistentVolumeClaim (once a
+            # StorageClass is available on this kubeadm cluster) is a documented
+            # follow-up, not required for the dashboards/alerts here to work.
+            - --storage.tsdb.retention.time=2d
+          ports: [{containerPort: 9090}]
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 1Gi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+            - {name: data, mountPath: /prometheus}
+          readinessProbe: {httpGet: {path: /-/ready, port: 9090}, initialDelaySeconds: 10}
+          livenessProbe: {httpGet: {path: /-/healthy, port: 9090}, initialDelaySeconds: 10}
+      volumes:
+        - {name: config, configMap: {name: prometheus-config}}
+        - {name: data, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: monitoring}
+spec:
+  selector: {app: prometheus}
+  ports: [{port: 9090, targetPort: 9090}]

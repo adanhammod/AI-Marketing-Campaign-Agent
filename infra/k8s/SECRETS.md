@@ -19,6 +19,56 @@ worker node instance profile. This is acceptable for the single-node kubeadm
 MVP, but should be replaced with per-workload pod identity before multi-tenant
 use.
 
+`BEDROCK_CREATIVE_PLAN_MODEL_ID`, `POLLY_VOICE_ID`, and `POLLY_ENGINE` are
+optional worker config, not secrets — they have safe defaults (deterministic
+creative-plan generator, Polly's default voice/`neural` engine) and can be
+added to `campaign-config` (not `campaign-secrets`) if you want to override
+them; see `services/worker/.env.example` for every variable the worker reads.
+
+## Monitoring: grafana-admin (namespace `monitoring`)
+
+**Required before the `campaign-monitoring` Argo Application is synced.** The
+Grafana Deployment (`infra/k8s/monitoring/grafana.yaml`) reads its admin
+credentials from a Secret named `grafana-admin` via `secretKeyRef` — without
+it, the Grafana pod fails to start (`CrashLoopBackOff`, never `Ready`), since
+Kubernetes cannot resolve the referenced key at container-start time. Create
+it the same way as `campaign-secrets` — directly against the cluster, never
+committed:
+
+```
+kubectl create secret generic grafana-admin \
+  --namespace monitoring \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password=<CHOOSE_A_PASSWORD>
+```
+
+## Verifying secrets are SET, without ever printing values
+
+Use `-o jsonpath` to check for key *presence* only — this never decodes or
+prints the actual secret value:
+
+```
+# campaign-secrets, per namespace (dev/prod)
+for key in SQS_QUEUE_URL DYNAMODB_TABLE_NAME CAMPAIGN_ARTIFACT_BUCKET \
+           BEDROCK_IMAGE_QUERY_MODEL_ID PEXELS_API_KEY \
+           CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN; do
+  if kubectl get secret campaign-secrets -n dev -o jsonpath="{.data.$key}" 2>/dev/null | grep -q .; then
+    echo "$key: SET"
+  else
+    echo "$key: MISSING"
+  fi
+done
+
+# grafana-admin, namespace monitoring
+for key in admin-user admin-password; do
+  if kubectl get secret grafana-admin -n monitoring -o jsonpath="{.data.$key}" 2>/dev/null | grep -q .; then
+    echo "$key: SET"
+  else
+    echo "$key: MISSING"
+  fi
+done
+```
+
 ## Docker Hub image pulls
 
 Images now come from Docker Hub instead of ECR (`<DOCKERHUB_USERNAME>/campaign-agent-*`

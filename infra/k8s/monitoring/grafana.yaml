@@ -1,0 +1,224 @@
+# Grafana, provisioned entirely from files (datasource + one dashboard) so the whole
+# setup is reproducible from git -- no manual "add a datasource" / "import a dashboard"
+# click-ops step.
+#
+# IMPORTANT: this Deployment reads its admin credentials from a Secret named
+# grafana-admin in this namespace, via secretKeyRef -- that Secret is NOT committed to
+# git (see infra/k8s/SECRETS.md) and MUST be created before this Application is synced.
+# Without it, the Grafana pod will not start (CrashLoopBackOff / never Ready).
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-datasources, namespace: monitoring}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.monitoring.svc.cluster.local:9090
+        uid: prometheus
+        isDefault: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-dashboard-provisioning, namespace: monitoring}
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: campaign-agent
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-dashboard-campaign-agent, namespace: monitoring}
+data:
+  campaign-agent-overview.json: |
+    {
+      "title": "AI Marketing Campaign Agent Overview",
+      "uid": "campaign-agent-overview",
+      "schemaVersion": 39,
+      "version": 1,
+      "editable": true,
+      "timezone": "browser",
+      "time": { "from": "now-6h", "to": "now" },
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1,
+          "title": "Scrape Targets Up",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{ "expr": "up", "legendFormat": "{{job}} / {{app}}" }]
+        },
+        {
+          "id": 2,
+          "title": "API Request Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{ "expr": "sum(rate(http_requests_total[5m])) by (path)", "legendFormat": "{{path}}" }]
+        },
+        {
+          "id": 3,
+          "title": "API 5xx Error Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m]))",
+              "legendFormat": "5xx ratio"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "API Request Latency (p95)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path))",
+              "legendFormat": "{{path}}"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Worker Jobs by Outcome",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(worker_jobs_processed_total[5m])) by (outcome)", "legendFormat": "{{outcome}}" }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Worker Jobs Failed",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(worker_jobs_failed_total[5m])) by (status)", "legendFormat": "{{status}}" }
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Worker Job Processing Duration (p95)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(worker_job_processing_duration_seconds_bucket[5m])) by (le))",
+              "legendFormat": "p95 duration"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Deployment Replica Availability",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_available{deployment=~\"campaign-agent-.*\"}",
+              "legendFormat": "{{namespace}}/{{deployment}}"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Pod CPU Usage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~\"dev|prod\", container!=\"\"}[5m]))",
+              "legendFormat": "{{namespace}}/{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "title": "Pod Memory Usage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~\"dev|prod\", container!=\"\"})",
+              "legendFormat": "{{namespace}}/{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "title": "Pod Restarts",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 44 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum by (namespace, pod) (kube_pod_container_status_restarts_total{namespace=~\"dev|prod\"})",
+              "legendFormat": "{{namespace}}/{{pod}}"
+            }
+          ]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels: {app: grafana}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: grafana}}
+  template:
+    metadata: {labels: {app: grafana}}
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.2
+          ports: [{containerPort: 3000}]
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom: {secretKeyRef: {name: grafana-admin, key: admin-user}}
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: grafana-admin, key: admin-password}}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          volumeMounts:
+            - {name: datasources, mountPath: /etc/grafana/provisioning/datasources}
+            - {name: dashboard-provisioning, mountPath: /etc/grafana/provisioning/dashboards}
+            - {name: dashboard-campaign-agent, mountPath: /var/lib/grafana/dashboards}
+          readinessProbe: {httpGet: {path: /api/health, port: 3000}, initialDelaySeconds: 10}
+          livenessProbe: {httpGet: {path: /api/health, port: 3000}, initialDelaySeconds: 10}
+      volumes:
+        - {name: datasources, configMap: {name: grafana-datasources}}
+        - {name: dashboard-provisioning, configMap: {name: grafana-dashboard-provisioning}}
+        - {name: dashboard-campaign-agent, configMap: {name: grafana-dashboard-campaign-agent}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: grafana, namespace: monitoring}
+spec:
+  selector: {app: grafana}
+  ports: [{port: 3000, targetPort: 3000}]

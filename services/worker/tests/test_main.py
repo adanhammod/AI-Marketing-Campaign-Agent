@@ -106,6 +106,37 @@ def test_build_consumer_falls_back_to_mock_voice_provider_when_asset_pipeline_is
     assert isinstance(consumer._processor._voice_provider, MockVoiceProvider)
 
 
+def test_build_consumer_rejects_all_mock_fallback_outside_local_and_test():
+    """A deployed worker (dev/prod) whose real-pipeline config is entirely missing --
+    e.g. campaign-secrets was never created -- must fail fast at startup instead of
+    silently running every campaign through mock providers with no signal that anything
+    is wrong."""
+    settings = _settings(
+        artifact_bucket=None,
+        pexels_api_key=None,
+        bedrock_image_query_model_id=None,
+        cloudflare_account_id=None,
+        cloudflare_api_token=None,
+        environment="dev",
+    )
+    with pytest.raises(ConfigurationError, match="no image/voice pipeline is configured"):
+        build_consumer(settings, sqs_client=object(), dynamodb_client=object())
+
+
+def test_build_consumer_allows_all_mock_fallback_in_local_and_test():
+    for environment in ("local", "test"):
+        settings = _settings(
+            artifact_bucket=None,
+            pexels_api_key=None,
+            bedrock_image_query_model_id=None,
+            cloudflare_account_id=None,
+            cloudflare_api_token=None,
+            environment=environment,
+        )
+        consumer = build_consumer(settings, sqs_client=object(), dynamodb_client=object())
+        assert isinstance(consumer._processor._voice_provider, MockVoiceProvider)
+
+
 def test_build_consumer_rejects_an_unsupported_polly_engine():
     settings = _settings(polly_engine="ultra-fast")
     with pytest.raises(ConfigurationError):
