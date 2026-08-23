@@ -1,3 +1,17 @@
+# Scoped the same way terraform/environments/dev/iam.tf already scopes its
+# BedrockInvoke statement -- previously this policy used Resource = "*" for Bedrock,
+# broader than dev's ARN-scoped equivalent for no reason tied to prod's actual needs.
+variable "bedrock_model_id" {
+  description = "Bedrock foundation model ID the worker is allowed to invoke (image-query / creative-plan generation). If it refers to a cross-region inference profile instead of a base foundation model, bedrock_model_arn below must be replaced with the inference-profile ARN format."
+  type        = string
+}
+
+data "aws_partition" "current" {}
+
+locals {
+  bedrock_model_arn = "arn:${data.aws_partition.current.partition}:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}"
+}
+
 resource "aws_iam_policy" "runtime" {
   name = "campaign-agent-prod-runtime"
   policy = jsonencode({
@@ -36,7 +50,7 @@ resource "aws_iam_policy" "runtime" {
         Sid      = "BedrockInvoke"
         Effect   = "Allow"
         Action   = ["bedrock:InvokeModel"]
-        Resource = "*"
+        Resource = local.bedrock_model_arn
       },
       {
         Sid      = "PollySynthesize"

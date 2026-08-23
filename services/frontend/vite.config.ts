@@ -16,5 +16,11 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
+    // A couple of form-submission tests exercise a real async render -> MSW-mocked
+    // network round-trip -> navigation chain that can legitimately take longer than
+    // vitest's 5000ms default under a loaded CI runner; observed flaking at ~7-8s
+    // with the default. 15s keeps a real regression (an actually-hung request) failing
+    // fast without being sensitive to normal CI scheduling jitter.
+    testTimeout: 15000,
   },
 })

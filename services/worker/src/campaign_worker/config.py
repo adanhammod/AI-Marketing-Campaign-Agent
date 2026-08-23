@@ -216,5 +216,3 @@ class Settings:
         )
         value.validate()
         return value
-        if value.environment != "test":
-            value.validate_image_pipeline()

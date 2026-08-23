@@ -4,7 +4,8 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
+from prometheus_client import REGISTRY, generate_latest
 from pydantic import BaseModel, ConfigDict
 from starlette.responses import Response
 
@@ -13,6 +14,7 @@ from campaign_api.artifacts.s3_artifact_url_signer import S3ArtifactURLSigner
 from campaign_api.config import Settings
 from campaign_api.dependencies import correlation_id_var, get_queue, get_repository
 from campaign_api.errors import configure_logging, register_error_handlers
+from campaign_api.metrics import metrics_middleware
 from campaign_api.queue.factory import create_job_queue
 from campaign_api.queue.job_queue import JobQueue
 from campaign_api.repositories.campaign_repository import CampaignRepository
@@ -54,6 +56,8 @@ def create_app(
         app.state.artifact_signer = None
         logging.getLogger(__name__).warning("artifact_bucket_not_configured")
 
+    app.middleware("http")(metrics_middleware)
+
     @app.middleware("http")
     async def request_context(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         raw = request.headers.get("X-Request-ID")
@@ -87,6 +91,10 @@ def create_app(
             status="ready" if ok else "unavailable", service=resolved.service_name, environment=resolved.environment
         )
         return body if ok else JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=body.model_dump())
+
+    @app.get("/metrics", tags=["metrics"])
+    async def metrics() -> PlainTextResponse:
+        return PlainTextResponse(generate_latest(REGISTRY))
 
     return app
 

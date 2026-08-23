@@ -34,6 +34,7 @@ def test_openapi_scope_and_contracts(app):
         "/api/v1/campaigns/{campaign_id}/events",
         "/health/live",
         "/health/ready",
+        "/metrics",
     } == paths
     create = schema["paths"]["/api/v1/campaigns"]["post"]
     assert "202" in create["responses"]

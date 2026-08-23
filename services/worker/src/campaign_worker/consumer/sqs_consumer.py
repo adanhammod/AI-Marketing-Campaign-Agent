@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
@@ -11,6 +12,7 @@ from campaign_contracts.enums import CampaignStatus
 from campaign_contracts.sqs import SQSJobMessage
 from pydantic import ValidationError
 
+from campaign_worker import metrics
 from campaign_worker.config import Settings
 from campaign_worker.errors import LeaseConflict, LeaseLost, PersistenceUnavailable, ProcessingUncertain
 from campaign_worker.queue.message import ReceivedMessage
@@ -107,6 +109,11 @@ class SQSConsumer:
             _LOG.warning("invalid_message_record_failed")
 
     async def process_raw(self, raw: dict[str, Any]) -> MessageOutcome:
+        outcome = await self._process_raw(raw)
+        metrics.JOBS_PROCESSED_TOTAL.labels(outcome=outcome.value.lower()).inc()
+        return outcome
+
+    async def _process_raw(self, raw: dict[str, Any]) -> MessageOutcome:
         try:
             received = self.parse(raw)
         except ValueError:
@@ -162,7 +169,9 @@ class SQSConsumer:
         lost = asyncio.Event()
         heartbeat = asyncio.create_task(self._heartbeat_loop(received, lease, stop, lost))
         try:
+            started_at = time.monotonic()
             result = await self._processor.process(message, version, lease)
+            metrics.JOB_PROCESSING_DURATION_SECONDS.observe(time.monotonic() - started_at)
             if not result.completed or lost.is_set():
                 return MessageOutcome.UNCERTAIN
             stop.set()

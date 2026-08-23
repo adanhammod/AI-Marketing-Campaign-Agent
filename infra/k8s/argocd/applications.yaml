@@ -14,6 +14,23 @@ spec:
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
+metadata: {name: campaign-monitoring, namespace: argocd}
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/adanhammod/AI-Marketing-Campaign-Agent.git
+    targetRevision: main
+    path: infra/k8s/monitoring
+  destination: {server: https://kubernetes.default.svc, namespace: monitoring}
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    # False deliberately: infra/k8s/monitoring/namespace.yaml is itself part of what
+    # this Application applies, so Argo's own namespace-autocreate flag would be a
+    # redundant second mechanism, not a backstop -- the manifest set is self-owning.
+    syncOptions: [CreateNamespace=false]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata: {name: campaign-agent-dev, namespace: argocd}
 spec:
   project: default

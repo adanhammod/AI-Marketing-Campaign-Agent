@@ -20,9 +20,14 @@ kind: Deployment
 metadata: {name: campaign-agent-api, namespace: prod}
 spec:
   replicas: 1
+  # Stateless HTTP service: a real zero-downtime rolling update -- one extra pod comes
+  # up and passes readiness before the old one is removed, never fewer than 1 available.
+  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 1, maxUnavailable: 0}}
   selector: {matchLabels: {app: campaign-agent-api}}
   template:
-    metadata: {labels: {app: campaign-agent-api}}
+    metadata:
+      labels: {app: campaign-agent-api}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8000", prometheus.io/path: /metrics}
     spec:
       containers:
         - name: api
@@ -33,8 +38,9 @@ spec:
           resources:
             requests: {cpu: 250m, memory: 256Mi}
             limits: {cpu: 500m, memory: 512Mi}
-          livenessProbe: {httpGet: {path: /health/live, port: 8000}}
-          readinessProbe: {httpGet: {path: /health/ready, port: 8000}}
+          startupProbe: {httpGet: {path: /health/live, port: 8000}, failureThreshold: 6, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health/live, port: 8000}, initialDelaySeconds: 10}
+          readinessProbe: {httpGet: {path: /health/ready, port: 8000}, initialDelaySeconds: 10}
 ---
 apiVersion: v1
 kind: Service
@@ -46,9 +52,20 @@ kind: Deployment
 metadata: {name: campaign-agent-worker, namespace: prod}
 spec:
   replicas: 1
+  # With replicas=1, a normal RollingUpdate (maxSurge>0) would briefly run two large
+  # (1-2 CPU / 2-3Gi) worker pods at once. maxSurge=0/maxUnavailable=1 avoids that by
+  # stopping the old pod before starting the new one -- which means the SQS consumer
+  # briefly stops polling during every rollout. This is NOT a zero-downtime rollout for
+  # the worker. It is acceptable because: (1) SQS durably buffers messages during the
+  # gap, (2) the existing graceful-shutdown path (consumer.shutdown() + the
+  # terminationGracePeriodSeconds below) drains any in-flight job first, and (3) it
+  # never doubles up on the worker's heavy resource footprint.
+  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 0, maxUnavailable: 1}}
   selector: {matchLabels: {app: campaign-agent-worker}}
   template:
-    metadata: {labels: {app: campaign-agent-worker}}
+    metadata:
+      labels: {app: campaign-agent-worker}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8080", prometheus.io/path: /metrics}
     spec:
       terminationGracePeriodSeconds: 60
       containers:
@@ -61,17 +78,31 @@ spec:
             requests: {cpu: "1", memory: 2Gi, ephemeral-storage: 8Gi}
             limits: {cpu: "2", memory: 3Gi, ephemeral-storage: 16Gi}
           volumeMounts: [{name: dshm, mountPath: /dev/shm}, {name: render-tmp, mountPath: /app/tmp}]
-          livenessProbe: {httpGet: {path: /health/live, port: 8080}}
-          readinessProbe: {httpGet: {path: /health/ready, port: 8080}}
+          # Generous budget (150s) for cold-start Chrome/ffmpeg/npx checks before
+          # liveness/readiness probing begins -- see build-time self-check in
+          # services/worker/Dockerfile.
+          startupProbe: {httpGet: {path: /health/live, port: 8080}, failureThreshold: 30, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health/live, port: 8080}, initialDelaySeconds: 20}
+          readinessProbe: {httpGet: {path: /health/ready, port: 8080}, initialDelaySeconds: 20}
       volumes:
         - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 1Gi}}
         - {name: render-tmp, emptyDir: {sizeLimit: 16Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: campaign-agent-worker, namespace: prod}
+spec:
+  # Not routed by the Ingress (the worker is an SQS consumer, not a web backend) --
+  # this Service exists solely so Prometheus can resolve/scrape its /metrics port.
+  selector: {app: campaign-agent-worker}
+  ports: [{port: 8080, targetPort: 8080}]
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: campaign-agent-frontend, namespace: prod}
 spec:
   replicas: 1
+  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 1, maxUnavailable: 0}}
   selector: {matchLabels: {app: campaign-agent-frontend}}
   template:
     metadata: {labels: {app: campaign-agent-frontend}}
@@ -84,6 +115,7 @@ spec:
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 200m, memory: 128Mi}
+          startupProbe: {httpGet: {path: /healthz, port: 8080}, failureThreshold: 6, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /healthz, port: 8080}}
           readinessProbe: {httpGet: {path: /healthz, port: 8080}}
 ---
