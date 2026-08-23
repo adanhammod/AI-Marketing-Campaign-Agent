@@ -20,6 +20,7 @@ from campaign_contracts.events import CampaignEvent
 from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.steps import WorkflowStepRecord
 
+from campaign_worker import metrics
 from campaign_worker.audio.pipeline import VoiceAssetPipeline
 from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.events import deterministic_event_id
@@ -301,6 +302,7 @@ class GraphJobProcessor(JobProcessor):
         )
         event = self._failure_event(updated_version, correlation_id, occurred_at=now)
         await self._repository.save_version(updated_version, lease, [event])
+        metrics.JOBS_FAILED_TOTAL.labels(status=updated_version.status.value.lower()).inc()
         return ProcessingResult(completed=True, marker="FAILURE_RECORDED")
 
     async def _fail(
@@ -317,6 +319,7 @@ class GraphJobProcessor(JobProcessor):
         updated_version = failed_state["version"]
         event = self._failure_event(updated_version, correlation_id, occurred_at=datetime.now(UTC))
         await self._repository.save_version(updated_version, lease, [event])
+        metrics.JOBS_FAILED_TOTAL.labels(status=updated_version.status.value.lower()).inc()
         return ProcessingResult(completed=True, marker="FAILURE_RECORDED")
 
     @staticmethod

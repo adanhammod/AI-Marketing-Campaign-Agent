@@ -22,3 +22,22 @@ resource "aws_sqs_queue" "main" {
     maxReceiveCount     = 5
   })
 }
+
+# Native CloudWatch metric, no extra exporter needed: alerts when messages are sitting
+# in the DLQ, i.e. jobs that exhausted every delivery attempt. No alarm_actions/SNS
+# topic is wired here deliberately -- that would be unused infrastructure until a
+# notification channel is actually chosen; the alarm is still visible/queryable in the
+# CloudWatch console today, and adding an action later is a one-line change.
+resource "aws_cloudwatch_metric_alarm" "dlq_has_messages" {
+  alarm_name          = "${var.queue_name}-dlq-has-messages"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  dimensions = {
+    QueueName = aws_sqs_queue.dlq.name
+  }
+}

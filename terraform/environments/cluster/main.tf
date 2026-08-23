@@ -8,6 +8,12 @@ variable "music_asset_object_arn" {
   default     = null
   nullable    = true
 }
+variable "control_plane_ssh_allowed_cidr" {
+  description = "CIDR allowed to SSH (TCP/22) to the control plane. Never 0.0.0.0/0 -- set this to your own admin IP/CIDR (e.g. \"203.0.113.4/32\") via a .tfvars file, never committed. Leave unset (null) to disable the SSH security group entirely and manage the control plane via SSM only."
+  type        = string
+  default     = null
+  nullable    = true
+}
 
 module "network" {
   source = "../../modules/network"
@@ -18,13 +24,17 @@ module "ecr" {
   repository_names = ["campaign-agent-frontend", "campaign-agent-api", "campaign-agent-worker"]
 }
 module "cluster" {
-  source                         = "../../modules/kubeadm-cluster"
-  name                           = "campaign-cluster"
-  vpc_id                         = module.network.vpc_id
-  subnet_ids                     = module.network.public_subnet_ids
-  aws_region                     = var.aws_region
-  control_plane_key_name         = "adan-key"
-  control_plane_ssh_allowed_cidr = "0.0.0.0/0"
+  source                 = "../../modules/kubeadm-cluster"
+  name                   = "campaign-cluster"
+  vpc_id                 = module.network.vpc_id
+  subnet_ids             = module.network.public_subnet_ids
+  aws_region             = var.aws_region
+  control_plane_key_name = "adan-key"
+  # Was hardcoded to "0.0.0.0/0" (SSH open to the world) here, directly contradicting
+  # this same module's own "Never 0.0.0.0/0" contract on the variable below -- now
+  # passed through from this root's own variable instead, which defaults to null (no
+  # SSH security group at all) rather than any public CIDR.
+  control_plane_ssh_allowed_cidr = var.control_plane_ssh_allowed_cidr
 }
 module "github_oidc" {
   source                 = "../../modules/github-oidc"
