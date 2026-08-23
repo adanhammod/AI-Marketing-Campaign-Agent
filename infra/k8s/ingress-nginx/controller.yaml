@@ -515,6 +515,17 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
+  annotations:
+    # This is the bare-manifest rendering of the upstream Helm chart's
+    # pre-install/pre-upgrade hook -- a one-shot bootstrap Job (ttlSecondsAfterFinished:
+    # 0 below) that Kubernetes deletes right after it completes. Without a hook
+    # annotation, Argo treats it as a permanent resource and cycles
+    # Synced -> OutOfSync forever once the TTL controller removes it. Marking it as an
+    # Argo hook (deleted by Argo itself on success, via hook-delete-policy) is the
+    # direct GitOps-native equivalent of the Helm hook semantics this manifest lost
+    # when it was vendored as raw YAML -- see infra/k8s/ingress-nginx/README.md.
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
   labels:
     app.kubernetes.io/component: admission-webhook
     app.kubernetes.io/instance: ingress-nginx
@@ -569,6 +580,13 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
+  annotations:
+    # Bare-manifest rendering of the upstream Helm chart's post-install/post-upgrade
+    # hook -- must run after the ValidatingWebhookConfiguration it patches already
+    # exists, hence PostSync (paired with admission-create's PreSync above). See that
+    # Job's comment for why this needs to be an Argo hook at all.
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
   labels:
     app.kubernetes.io/component: admission-webhook
     app.kubernetes.io/instance: ingress-nginx
