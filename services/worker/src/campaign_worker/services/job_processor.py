@@ -21,6 +21,7 @@ from campaign_contracts.sqs import SQSJobMessage
 from campaign_contracts.steps import WorkflowStepRecord
 
 from campaign_worker.audio.pipeline import VoiceAssetPipeline
+from campaign_worker.errors import WorkflowOperationError
 from campaign_worker.events import deterministic_event_id
 from campaign_worker.graph import nodes
 from campaign_worker.graph.boundary import NodeFailure
@@ -61,6 +62,12 @@ class JobProcessor(ABC):
     async def process(
         self, message: SQSJobMessage, version: CampaignVersion, lease: LeaseContext
     ) -> ProcessingResult: ...
+
+    async def fail_delivery_exhausted(
+        self, version: CampaignVersion, lease: LeaseContext, correlation_id: UUID
+    ) -> ProcessingResult | None:
+        """No-op by default; only GraphJobProcessor persists a terminal FAILED state here."""
+        return None
 
 
 class NoOpJobProcessor(JobProcessor):
@@ -178,6 +185,40 @@ class GraphJobProcessor(JobProcessor):
             if record is not None and record.status in _TERMINAL_STEP_STATUSES:
                 last = step
         return last
+
+    async def _in_flight_step(self, version: CampaignVersion) -> WorkflowStep | None:
+        """The step that was actively executing when delivery attempts ran out: the one
+        immediately after the last step with a terminal (SUCCEEDED/REUSED/SKIPPED) record.
+        Falls back to the previously recorded resume_step if no pipeline step has completed
+        at all, so a campaign that never got past its first step still gets attributed.
+        """
+        last_completed = await self._last_completed_pipeline_step(version)
+        if last_completed is None:
+            return version.retry.resume_step or _PIPELINE_ORDER[0]
+        index = _PIPELINE_ORDER.index(last_completed)
+        if index + 1 < len(_PIPELINE_ORDER):
+            return _PIPELINE_ORDER[index + 1]
+        return last_completed
+
+    async def fail_delivery_exhausted(
+        self, version: CampaignVersion, lease: LeaseContext, correlation_id: UUID
+    ) -> ProcessingResult | None:
+        """Last-resort terminal handling for a message whose SQS delivery attempts ran out
+        (see SQSConsumer.process_raw's exhaustion branch). Without this, a job can be
+        redriven to the DLQ while its campaign is left exactly as it was found -- QUEUED with
+        error=None -- because record_exhausted() only writes an unrelated DynamoDB marker
+        item. Delegates to the same handle_failure/_fail path normal in-graph failures use,
+        so the persisted shape (status, error, retry.resume_step, FAILED event) is identical.
+        """
+        if version.status in (CampaignStatus.FAILED, CampaignStatus.CANCELLED, CampaignStatus.FINAL):
+            return None
+        step = await self._in_flight_step(version)
+        error = WorkflowOperationError(
+            code="DELIVERY_RETRY_EXHAUSTED",
+            message="SQS delivery attempts exhausted before the workflow could complete or fail cleanly",
+            retryable=False,
+        )
+        return await self._fail(version, error, lease, step=step, correlation_id=correlation_id)
 
     def _terminal_events(
         self, version: CampaignVersion, starting_status: CampaignStatus, correlation_id: UUID

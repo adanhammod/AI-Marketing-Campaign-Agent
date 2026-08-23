@@ -65,7 +65,32 @@ def with_step_tracking(step: WorkflowStep, repository: WorkflowRepository) -> Ca
                 ),
                 [_step_event(state, step, CampaignEventType.STEP_STARTED, occurred_at=now)],
             )
-            result = await fn(state)
+            try:
+                result = await fn(state)
+            except BaseException as exc:
+                failed_at = datetime.now(UTC)
+                await repository.save_step(
+                    WorkflowStepRecord(
+                        campaign_id=version.campaign_id,
+                        campaign_version=version.campaign_version,
+                        step=step,
+                        status=StepStatus.FAILED,
+                        started_at=now,
+                        completed_at=failed_at,
+                        created_at=now,
+                        updated_at=failed_at,
+                    ),
+                    [
+                        _step_event(
+                            state,
+                            step,
+                            CampaignEventType.STEP_FAILED,
+                            occurred_at=failed_at,
+                            details={"error": str(exc)[:500]},
+                        )
+                    ],
+                )
+                raise
             skipped = bool(result.pop("_step_skipped", False))
             skip_reason = result.pop("_skip_reason", None)
             completed_at = datetime.now(UTC)

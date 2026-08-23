@@ -24,6 +24,7 @@ from campaign_contracts.enums import (
 )
 from campaign_contracts.errors import SanitizedWorkflowError
 from campaign_contracts.sqs import SQSJobMessage
+from campaign_contracts.steps import WorkflowStepRecord
 
 from campaign_worker.config import Settings
 from campaign_worker.consumer.sqs_consumer import MessageOutcome, SQSConsumer
@@ -743,6 +744,90 @@ async def test_voiceover_duration_failure_records_voiceover_as_the_resume_step()
 
 
 @pytest.mark.asyncio
+async def test_voiceover_step_failure_persists_step_failed_record_and_event():
+    """A failure inside a step-tracked node (voiceover here) must not just be caught by
+    the outer graph-level handler -- with_step_tracking itself must durably flip that
+    step's own WorkflowStepRecord from RUNNING to FAILED and emit a STEP_FAILED event,
+    instead of leaving it stuck at RUNNING forever (the gap that made the voiceover step
+    look permanently "in progress" for the reported bug)."""
+    repository, processor = _processor(voice_provider=_DurationRejectingVoicePipeline())
+    version = _version()
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    result = await processor.process(message, version, _lease())
+
+    assert result.completed is True
+    step_record = repository.steps[(version.campaign_id, version.campaign_version, WorkflowStep.VOICEOVER)]
+    assert step_record.status == StepStatus.FAILED
+    step_failed_events = [
+        event
+        for events in repository.step_events
+        for event in events
+        if event.event_type == CampaignEventType.STEP_FAILED
+    ]
+    assert len(step_failed_events) == 1
+    assert step_failed_events[0].step == WorkflowStep.VOICEOVER
+    # the campaign-level failure handling (tested separately above) is unaffected
+    assert repository.save_calls[-1].status == CampaignStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_fail_delivery_exhausted_marks_campaign_failed_from_in_flight_step():
+    """The exhaustion backstop (called by SQSConsumer once SQS delivery attempts run
+    out) must persist a terminal FAILED state attributing the failure to the step that
+    was actually in flight -- derived from the last step with a terminal record, not
+    left at whatever status the campaign already had (e.g. QUEUED)."""
+    repository, processor = _processor()
+    version = _version(status=CampaignStatus.QUEUED)
+    now = datetime.now(UTC)
+    for step in (WorkflowStep.STRATEGY, WorkflowStep.COPY, WorkflowStep.STORYBOARD, WorkflowStep.CREATIVE_PLAN, WorkflowStep.IMAGES):
+        repository.steps[(version.campaign_id, version.campaign_version, step)] = WorkflowStepRecord(
+            campaign_id=version.campaign_id,
+            campaign_version=version.campaign_version,
+            step=step,
+            status=StepStatus.SUCCEEDED,
+            started_at=now,
+            completed_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+    result = await processor.fail_delivery_exhausted(version, _lease(), uuid4())
+
+    assert result is not None and result.completed is True
+    final = repository.save_calls[-1]
+    assert final.status == CampaignStatus.FAILED
+    assert final.error is not None
+    assert final.error.code == "DELIVERY_RETRY_EXHAUSTED"
+    assert final.retry.retryable is False
+    assert final.retry.resume_step == WorkflowStep.VOICEOVER
+    assert final.error.workflow_step == WorkflowStep.VOICEOVER
+    failure_events = [
+        event
+        for events in repository.version_events
+        for event in events
+        if event.event_type == CampaignEventType.FAILED
+    ]
+    assert len(failure_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_fail_delivery_exhausted_is_idempotent_when_already_terminal():
+    """If a concurrent/earlier attempt already resolved the campaign to a terminal
+    status before the exhaustion branch runs, it must be left untouched -- otherwise
+    a second FAILED write would corrupt an already-successful FINAL/CANCELLED outcome
+    or double-count the retry attempt on an already-FAILED one."""
+    repository, processor = _processor()
+    for status in (CampaignStatus.FAILED, CampaignStatus.CANCELLED, CampaignStatus.FINAL):
+        version = _version(status=status)
+
+        result = await processor.fail_delivery_exhausted(version, _lease(), uuid4())
+
+        assert result is None
+    assert repository.save_calls == []
+
+
+@pytest.mark.asyncio
 async def test_video_failure_records_video_as_the_resume_step():
     repository, processor = _processor(video_provider=_AlwaysFailsVideoProvider())
     version = _version()
@@ -1036,6 +1121,40 @@ async def test_integration_resume_message_is_processed_and_acknowledged():
     assert outcome == MessageOutcome.ACKNOWLEDGED
     assert repository.version.status == CampaignStatus.FINAL
     assert repository.version.review_package is not None
+
+
+@pytest.mark.asyncio
+async def test_integration_exhausted_delivery_persists_failed_never_leaves_campaign_queued():
+    """Reproduces the reported bug end-to-end: a message whose SQS ApproximateReceiveCount
+    has exceeded max_delivery_attempts (e.g. because earlier attempts crashed mid-step
+    before they could persist anything, exactly as with a killed pod/node during
+    voiceover) must still converge the campaign to FAILED -- never leave it at QUEUED
+    with error=None while the message itself heads to the DLQ."""
+    version = _version(status=CampaignStatus.QUEUED)
+    repository = _FullFakeRepository(version)
+    now = datetime.now(UTC)
+    repository.steps[(version.campaign_id, version.campaign_version, WorkflowStep.STRATEGY)] = WorkflowStepRecord(
+        campaign_id=version.campaign_id,
+        campaign_version=version.campaign_version,
+        step=WorkflowStep.STRATEGY,
+        status=StepStatus.SUCCEEDED,
+        started_at=now,
+        completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    processor = GraphJobProcessor(repository, MockImageProvider(), MockVoiceProvider(), MockVideoProvider())
+    consumer = SQSConsumer(_StubSQSClient(), repository, processor, _settings())
+    message = _message(SQSOperation.START, version.campaign_id, version.job_id)
+
+    outcome = await consumer.process_raw(_raw(message, count=_settings().max_delivery_attempts + 1))
+
+    assert outcome == MessageOutcome.RETRY_EXHAUSTED
+    assert repository.version.status == CampaignStatus.FAILED
+    assert repository.version.status != CampaignStatus.QUEUED
+    assert repository.version.error is not None
+    assert repository.version.error.code == "DELIVERY_RETRY_EXHAUSTED"
+    assert repository.version.retry.resume_step == WorkflowStep.COPY
 
 
 @pytest.mark.asyncio
