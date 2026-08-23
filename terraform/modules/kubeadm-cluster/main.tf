@@ -255,11 +255,10 @@ resource "aws_lb_target_group" "dev" {
   protocol = "HTTP"
   vpc_id   = var.vpc_id
   health_check {
-    # Reaches ingress-nginx on the worker NodePort; the "/" Ingress rule
-    # (infra/k8s/dev/apps.yaml) is a catch-all with no host restriction, so
-    # any Host header lands on the frontend Service, whose nginx.conf serves
-    # a dedicated `location = /healthz` returning a bare 200. No dedicated
-    # Ingress health route is needed.
+    # Reaches ingress-nginx on the worker NodePort. The dev Ingress keeps one
+    # host-less Exact /healthz rule because ALB health checks do not send the
+    # campaign-dev.adan.fursa.click Host header. The frontend nginx serves that
+    # endpoint as a bare 200.
     path    = "/healthz"
     matcher = "200"
   }
@@ -275,6 +274,9 @@ resource "aws_lb_listener" "dev" {
 }
 output "alb_dns_name" {
   value = aws_lb.dev.dns_name
+}
+output "alb_zone_id" {
+  value = aws_lb.dev.zone_id
 }
 output "control_plane_id" {
   value = aws_instance.control.id
