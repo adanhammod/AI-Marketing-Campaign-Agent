@@ -1,0 +1,19 @@
+# Real variable values (account IDs, ARNs) — never commit
+*.tfvars
+!*.tfvars.example
+*.auto.tfvars
+
+# Local Terraform working directory and state
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Plan output
+tfplan
+*.tfplan
+
+# Terraform override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
