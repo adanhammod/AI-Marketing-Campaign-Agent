@@ -132,7 +132,8 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - http:
+    - host: prod.campaign-agent.local
+      http:
         paths:
           - path: /api
             pathType: Prefix
