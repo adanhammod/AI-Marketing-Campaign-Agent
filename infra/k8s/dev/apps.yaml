@@ -148,11 +148,22 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - http:
+    - host: dev.campaign-agent.local
+      http:
         paths:
           - path: /api
             pathType: Prefix
             backend: {service: {name: campaign-agent-api, port: {number: 8000}}}
           - path: /
             pathType: Prefix
+            backend: {service: {name: campaign-agent-frontend, port: {number: 80}}}
+    - http:
+        # No host: the dev ALB target group health-checks ingress-nginx directly on
+        # this path (terraform/modules/kubeadm-cluster/main.tf, aws_lb_target_group.dev)
+        # without a Host-header override, so it needs a host-less match to keep
+        # passing now that the rule above requires dev.campaign-agent.local. Scoped to
+        # exactly this one path so it can never collide with prod's Ingress.
+        paths:
+          - path: /healthz
+            pathType: Exact
             backend: {service: {name: campaign-agent-frontend, port: {number: 80}}}
