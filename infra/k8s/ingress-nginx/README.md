@@ -11,9 +11,11 @@ vendored unmodified except for the `ingress-nginx-controller` Service:
   (`aws_security_group.worker_ingress`).
 
 Deployed via the `campaign-ingress-nginx` Argo CD Application
-(`infra/k8s/argocd/applications.yaml`), synced from the `main` branch to the
-`ingress-nginx` namespace on every cluster, ahead of the per-environment
-`campaign-agent-dev` / `campaign-agent-prod` Applications.
+(`infra/k8s/argocd/applications/applications.yaml`, itself managed by the
+`campaign-apps` App-of-Apps root -- see `infra/k8s/argocd/root-application.yaml`),
+synced from the `main` branch to the `ingress-nginx` namespace on every cluster,
+ahead of the per-environment `campaign-agent-dev` / `campaign-agent-prod`
+Applications.
 
 To pick up a newer ingress-nginx release, re-fetch the upstream manifest and
 reapply the same two-line NodePort patch — do not hand-edit anything else in
