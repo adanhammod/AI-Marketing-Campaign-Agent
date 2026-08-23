@@ -4,8 +4,11 @@ data "aws_iam_role" "terraform_bootstrap" {
 
 data "aws_iam_policy_document" "terraform_bootstrap_route53" {
   statement {
-    sid       = "DiscoverHostedZoneByName"
-    actions   = ["route53:ListHostedZonesByName"]
+    sid = "DiscoverHostedZoneByName"
+    actions = [
+      "route53:ListHostedZones",
+      "route53:ListHostedZonesByName",
+    ]
     resources = ["*"]
   }
 
