@@ -148,7 +148,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: dev.campaign-agent.local
+    - host: campaign-dev.adan.fursa.click
       http:
         paths:
           - path: /api
@@ -161,7 +161,7 @@ spec:
         # No host: the dev ALB target group health-checks ingress-nginx directly on
         # this path (terraform/modules/kubeadm-cluster/main.tf, aws_lb_target_group.dev)
         # without a Host-header override, so it needs a host-less match to keep
-        # passing now that the rule above requires dev.campaign-agent.local. Scoped to
+        # passing now that the rule above requires campaign-dev.adan.fursa.click. Scoped to
         # exactly this one path so it can never collide with prod's Ingress.
         paths:
           - path: /healthz
