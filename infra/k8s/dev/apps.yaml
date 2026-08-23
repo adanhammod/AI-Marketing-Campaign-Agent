@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: adanhammod/campaign-agent-api:4c22748fe1bbe4838bc8fb5e4191b8a12badb7d1
+          image: adanhammod/campaign-agent-api:e51b61b2872a7bc7335f8fb88e5e13572bab634a
           imagePullPolicy: Always
           ports: [{containerPort: 8000}]
           envFrom:
@@ -78,7 +78,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: worker
-          image: adanhammod/campaign-agent-worker:4c22748fe1bbe4838bc8fb5e4191b8a12badb7d1
+          image: adanhammod/campaign-agent-worker:e51b61b2872a7bc7335f8fb88e5e13572bab634a
           imagePullPolicy: Always
           ports: [{containerPort: 8080}]
           envFrom:
@@ -123,7 +123,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: adanhammod/campaign-agent-frontend:4c22748fe1bbe4838bc8fb5e4191b8a12badb7d1
+          image: adanhammod/campaign-agent-frontend:e51b61b2872a7bc7335f8fb88e5e13572bab634a
           imagePullPolicy: Always
           ports: [{containerPort: 8080}]
           resources:
