@@ -20,6 +20,7 @@ jobs:
       control_plane_id: ${{ steps.tf-output.outputs.control_plane_id }}
 
     env:
+      TF_VAR_control_plane_ssh_allowed_cidr: ${{ vars.CONTROL_PLANE_SSH_ALLOWED_CIDR }}
       TF_VAR_music_asset_object_arn: ${{ vars.MUSIC_ASSET_OBJECT_ARN }}
 
     steps:
