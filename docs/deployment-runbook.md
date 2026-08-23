@@ -80,11 +80,27 @@ Argo CD
   object pointing at the right Git path" — it does **not** mean "Argo CD auto-deploys
   to the `prod` namespace." Someone still has to run `argocd app sync
   campaign-agent-prod` (or click Sync in the UI) for that.
-- **One-time bootstrap**: `kubectl apply -f infra/k8s/argocd/root-application.yaml`.
-  This is the *only* manual `kubectl apply` step left in the whole flow, and only
-  needs to run once per cluster (already wired into
-  `.github/workflows/cluster-provision.yml`'s one-time Argo CD bootstrap, so a fresh
-  cluster never needs it run by hand at all).
+- **Bootstrap is fully automated, for both a fresh cluster and the existing one**:
+  a fresh cluster gets `campaign-apps` applied as part of
+  `.github/workflows/cluster-provision.yml`'s one-time Argo CD install. The cluster
+  running today predates that change, so a second, much smaller workflow,
+  `.github/workflows/argocd-root-sync.yml`, closes that one gap: it triggers on any
+  push to `main` that touches `infra/k8s/argocd/root-application.yaml` (plus
+  `workflow_dispatch` for a manual re-run) and applies just that one file to the
+  already-running control plane over the same AWS SSM channel
+  `cluster-provision.yml` uses — no new credentials, no public kubectl endpoint, no
+  static keys. There is no longer any scenario that requires you to manually run
+  `kubectl apply -f infra/k8s/argocd/root-application.yaml` yourself.
+- **Why this is idempotent and safe**: the workflow only ever reads Terraform state
+  (`terraform output`, never `plan`/`apply`) to find the control-plane instance ID,
+  and only ever `kubectl apply`s the single `campaign-apps` object — a declarative
+  operation that converges to the same result no matter how many times it runs.
+  It never applies the child Application manifests directly (those stay exclusively
+  managed by Argo CD's own App-of-Apps reconciliation, so there's no second,
+  competing deployment mechanism), never installs/reinstalls Argo CD, and never
+  touches `campaign-agent-prod`'s `syncPolicy` — so repeated runs can update
+  `campaign-apps` itself (e.g. if its `targetRevision` or `path` ever changes) but
+  can never cause prod to auto-deploy.
 - **After bootstrap**: `git push` (touching anything under
   `infra/k8s/argocd/applications/`) → `campaign-apps` detects the change → the child
   Application objects are created/updated/removed in the cluster → each child syncs
@@ -94,7 +110,10 @@ Argo CD
 
 Verify: `kubectl get applications -n argocd` should show `campaign-apps` plus all four
 children; `argocd app get campaign-apps` should show `Synced`/`Healthy` with the four
-children as its managed resources.
+children as its managed resources. To check `argocd-root-sync.yml` itself ran
+correctly: GitHub Actions run logs show the SSM command's `StandardOutputContent`,
+which includes `kubectl get application campaign-apps -n argocd -o wide` and
+`kubectl get applications -n argocd` output directly.
 
 ## 2. Application data flow
 
