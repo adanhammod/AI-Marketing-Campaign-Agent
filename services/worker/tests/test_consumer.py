@@ -499,6 +499,116 @@ async def test_retry_bound_records_failure_without_delete():
     assert repository.exhausted == [4] and queue.deletes == []
 
 
+class RecordingExhaustionProcessor(JobProcessor):
+    """Stands in for GraphJobProcessor.fail_delivery_exhausted (tested for real, with the
+    full campaign-state shape it persists, in test_job_processor.py) -- here we only need
+    to prove the consumer's exhaustion branch actually calls it, with a live lease, instead
+    of the old behavior of only writing the unrelated DELIVERY_FAILURE marker record."""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def process(self, message, state, lease):
+        raise AssertionError("process() must not run once delivery attempts are exhausted")
+
+    async def fail_delivery_exhausted(self, version, lease, correlation_id):
+        self.calls.append((version, lease, correlation_id))
+        return ProcessingResult(True, "FAILURE_RECORDED")
+
+
+@pytest.mark.asyncio
+async def test_retry_bound_invokes_exhaustion_backstop_with_loaded_version_and_lease():
+    """The bug this closes: record_exhausted() only ever wrote a sibling DynamoDB marker
+    item and never touched the campaign row, so a campaign could ride out to the DLQ
+    while staying QUEUED with error=None forever. The exhaustion branch must now also
+    load the version, acquire a lease, and hand both to the processor's terminal
+    backstop -- then release the lease -- regardless of the DLQ/delete behavior, which
+    is unchanged."""
+    value = job()
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    processor = RecordingExhaustionProcessor()
+    consumer = SQSConsumer(queue, repository, processor, settings(max_delivery_attempts=3), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value, count=4))
+
+    assert outcome == MessageOutcome.RETRY_EXHAUSTED
+    assert repository.exhausted == [4] and queue.deletes == []
+    assert len(processor.calls) == 1
+    called_version, called_lease, called_correlation_id = processor.calls[0]
+    assert called_version.campaign_id == value.campaign_id
+    assert called_lease.owner == "worker-a"
+    assert called_correlation_id == value.correlation_id
+    # the lease taken to safely mark FAILED must not be left dangling once we're done
+    assert repository.lease is None
+
+
+@pytest.mark.asyncio
+async def test_retry_bound_exhaustion_backstop_skips_on_lease_conflict():
+    """If another attempt is still genuinely live (holds the lease), the exhaustion
+    branch must not race it -- it leaves campaign state for that live attempt to
+    resolve, rather than risking a corrupting concurrent write."""
+    value = job()
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    repository.conflict = True
+    processor = RecordingExhaustionProcessor()
+    consumer = SQSConsumer(queue, repository, processor, settings(max_delivery_attempts=3), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value, count=4))
+
+    assert outcome == MessageOutcome.RETRY_EXHAUSTED
+    assert processor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_retry_bound_exhaustion_backstop_never_raises_out_of_process_raw():
+    """A bug inside the backstop itself (e.g. fail_delivery_exhausted raising) must not
+    prevent record_exhausted's own durable marker write from taking effect, and must not
+    crash the caller -- process_raw always returns RETRY_EXHAUSTED once record_exhausted
+    has succeeded, regardless of what happens in the best-effort campaign-state repair."""
+
+    class ExplodingProcessor(JobProcessor):
+        async def process(self, message, state, lease):
+            raise AssertionError("must not be called")
+
+        async def fail_delivery_exhausted(self, version, lease, correlation_id):
+            raise RuntimeError("simulated bug in the backstop itself")
+
+    value = job()
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    consumer = SQSConsumer(queue, repository, ExplodingProcessor(), settings(max_delivery_attempts=3), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value, count=4))
+
+    assert outcome == MessageOutcome.RETRY_EXHAUSTED
+    assert repository.exhausted == [4] and queue.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_in_processor_is_uncertain_not_a_crash():
+    """A bug inside processor.process()/_fail()/handle_failure() itself (not one of the
+    already-handled LeaseLost/PersistenceUnavailable/ProcessingUncertain cases) must be
+    caught at the consumer loop boundary and treated as UNCERTAIN (leave the message for
+    redelivery) rather than propagating out and silently killing that iteration of the
+    consumer loop without a trace."""
+
+    class BuggyProcessor(JobProcessor):
+        async def process(self, message, state, lease):
+            raise KeyError("simulated unexpected bug, not a recognized retryable error")
+
+    value = job()
+    queue = StubSQS()
+    repository = FakeRepository(value)
+    consumer = SQSConsumer(queue, repository, BuggyProcessor(), settings(), "worker-a")
+
+    outcome = await consumer.process_raw(raw(value))
+
+    assert outcome == MessageOutcome.UNCERTAIN
+    assert queue.deletes == []
+
+
 @pytest.mark.asyncio
 async def test_health_is_non_consuming_and_shutdown_stops_receive():
     value = job()
