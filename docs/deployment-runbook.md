@@ -19,7 +19,7 @@ Promotion PR (automation/dev-images-<sha> / automation/prod-images-<sha>)
         |  sed-rewrites the image tag in infra/k8s/{dev,prod}/apps.yaml
         |  <-- a human reviews and merges this PR (deliberate GitOps gate, not a gap)
         v
-Argo CD (infra/k8s/argocd/applications.yaml)
+Argo CD -- App-of-Apps (see §1a below)
         |  campaign-agent-dev:  automated (prune+selfHeal) on the dev branch
         |  campaign-agent-prod: MANUAL sync only, on main -- never auto-applied
         v
@@ -41,6 +41,60 @@ Terraform `fmt`/`validate` (all four roots), frontend `lint`/`test`/`build`, API
 `ruff`/`mypy`/`pytest`, worker `pytest` (see §9 on why worker `ruff`/`mypy` aren't
 gated yet), shared `pytest`, and Docker build sanity checks for all three services
 (the worker's uses a throwaway placeholder music asset — see the workflow's comment).
+
+## 1a. Argo CD App-of-Apps
+
+Argo CD Applications are themselves Kubernetes objects, so they need to be created
+somehow. Before this change, `infra/k8s/argocd/applications.yaml` held all four child
+Application definitions, but nothing in the cluster watched *that file* — adding a new
+one (like `campaign-monitoring`) still required a manual
+`kubectl apply -f infra/k8s/argocd/applications.yaml`. The **App-of-Apps pattern**
+fixes this by making one Argo CD Application (the "root") watch the directory that
+holds the *other* Applications' definitions, so Argo CD reconciles those definitions
+from Git the same way it already reconciles everything else.
+
+```
+Argo CD
+└── campaign-apps                       (root, infra/k8s/argocd/root-application.yaml)
+    ├── campaign-agent-dev               automated (dev branch)
+    ├── campaign-agent-prod              MANUAL sync (main branch) -- unchanged
+    ├── campaign-ingress-nginx           automated (main branch)
+    └── campaign-monitoring              automated (main branch)
+```
+
+- **Root Application**: `campaign-apps`, defined in `infra/k8s/argocd/root-application.yaml`.
+  Its source path is `infra/k8s/argocd/applications/` — a directory containing *only*
+  the four child Application manifests
+  (`infra/k8s/argocd/applications/applications.yaml`, unchanged content, just moved).
+  `root-application.yaml` itself lives one level up, outside that directory, so
+  syncing `campaign-apps` never applies/prunes/touches its own definition — there is
+  no self-reference and no recursive sync loop.
+- **Sync policy split, and why it's safe**: `campaign-apps` is `automated:
+  {prune: true, selfHeal: true}` — a push that edits a child Application's *definition*
+  (its `syncPolicy`, `targetRevision`, `path`, or adds/removes a whole Application)
+  propagates automatically. That is a different, higher-level thing than *deploying
+  workloads*. Each child Application keeps its own, independent `syncPolicy` exactly as
+  before: `campaign-agent-dev`, `campaign-ingress-nginx`, and `campaign-monitoring`
+  stay automated; **`campaign-agent-prod` stays manual-sync-only**. `campaign-apps`
+  auto-updating means "Argo CD always has an up-to-date `campaign-agent-prod` App
+  object pointing at the right Git path" — it does **not** mean "Argo CD auto-deploys
+  to the `prod` namespace." Someone still has to run `argocd app sync
+  campaign-agent-prod` (or click Sync in the UI) for that.
+- **One-time bootstrap**: `kubectl apply -f infra/k8s/argocd/root-application.yaml`.
+  This is the *only* manual `kubectl apply` step left in the whole flow, and only
+  needs to run once per cluster (already wired into
+  `.github/workflows/cluster-provision.yml`'s one-time Argo CD bootstrap, so a fresh
+  cluster never needs it run by hand at all).
+- **After bootstrap**: `git push` (touching anything under
+  `infra/k8s/argocd/applications/`) → `campaign-apps` detects the change → the child
+  Application objects are created/updated/removed in the cluster → each child syncs
+  (or waits for manual sync, for prod) according to its own policy. The old manual
+  step (`kubectl apply -f infra/k8s/argocd/applications.yaml`) is gone — don't run it,
+  the file no longer exists at that path.
+
+Verify: `kubectl get applications -n argocd` should show `campaign-apps` plus all four
+children; `argocd app get campaign-apps` should show `Synced`/`Healthy` with the four
+children as its managed resources.
 
 ## 2. Application data flow
 
@@ -135,7 +189,9 @@ kubectl rollout status deployment/campaign-agent-frontend -n dev
 kubectl logs -n dev deployment/campaign-agent-worker --tail=200
 kubectl top pods -n dev
 
-# Argo CD
+# Argo CD -- campaign-apps is the App-of-Apps root; the rest are its children
+kubectl get applications -n argocd
+argocd app get campaign-apps
 argocd app get campaign-agent-dev
 argocd app get campaign-agent-prod
 argocd app get campaign-ingress-nginx

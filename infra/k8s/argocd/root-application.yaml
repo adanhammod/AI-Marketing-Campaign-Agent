@@ -1,0 +1,27 @@
+# App-of-Apps root. This Application's own manifest lives in infra/k8s/argocd/,
+# ONE LEVEL ABOVE the infra/k8s/argocd/applications/ directory it manages -- so
+# syncing campaign-apps never touches its own resource definition (no self-reference,
+# no recursive management). Everything under infra/k8s/argocd/applications/ is a
+# plain child Application object; nothing there points back at infra/k8s/argocd/ or
+# at this file.
+#
+# One-time bootstrap only: `kubectl apply -f infra/k8s/argocd/root-application.yaml`.
+# After that, adding/editing/removing a file under infra/k8s/argocd/applications/ and
+# pushing to `main` is enough -- campaign-apps (automated: prune+selfHeal) picks it up
+# and creates/updates/removes the corresponding child Application, which then syncs
+# according to its OWN syncPolicy (see infra/k8s/argocd/applications/applications.yaml
+# -- unchanged by this change: dev and ingress-nginx and monitoring stay automated,
+# prod stays manual).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata: {name: campaign-apps, namespace: argocd}
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/adanhammod/AI-Marketing-Campaign-Agent.git
+    targetRevision: main
+    path: infra/k8s/argocd/applications
+  destination: {server: https://kubernetes.default.svc, namespace: argocd}
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=false]
