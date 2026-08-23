@@ -132,7 +132,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: prod.campaign-agent.local
+    - host: campaign-prod.adan.fursa.click
       http:
         paths:
           - path: /api
