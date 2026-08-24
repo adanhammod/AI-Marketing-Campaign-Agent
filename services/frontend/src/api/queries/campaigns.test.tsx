@@ -2,7 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import type { ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createQueryClient } from '../queryClient'
 import { server } from '../../test/mocks/server'
@@ -11,7 +11,16 @@ import {
   campaignDetailFixture,
   campaignSummaryFixture,
 } from '../../test/mocks/handlers'
-import { useCampaignDetail, useCampaignList, useCreateCampaign } from './campaigns'
+import {
+  createIdempotencyKey,
+  useCampaignDetail,
+  useCampaignList,
+  useCreateCampaign,
+} from './campaigns'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 function wrapperFor(queryClient = createQueryClient()) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -68,7 +77,9 @@ describe('useCampaignDetail', () => {
 })
 
 describe('useCreateCampaign', () => {
-  it('posts with an Idempotency-Key header and returns the typed response', async () => {
+  it('uses crypto.randomUUID for the Idempotency-Key when available', async () => {
+    const randomUUID = vi.fn(() => '123e4567-e89b-42d3-a456-426614174000')
+    vi.stubGlobal('crypto', { randomUUID, getRandomValues: vi.fn() })
     let idempotencyKey: string | null = null
     server.use(
       http.post('/api/v1/campaigns', ({ request }) => {
@@ -92,7 +103,19 @@ describe('useCreateCampaign', () => {
     })
 
     expect(response).toEqual(campaignCreationAcceptedFixture)
-    expect(idempotencyKey).toBeTruthy()
+    expect(idempotencyKey).toBe('123e4567-e89b-42d3-a456-426614174000')
+    expect(randomUUID).toHaveBeenCalledOnce()
+  })
+
+  it('generates a UUID idempotency key when crypto.randomUUID is unavailable', () => {
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.set(Array.from({ length: 16 }, (_, index) => index))
+      return bytes
+    })
+    vi.stubGlobal('crypto', { getRandomValues })
+
+    expect(createIdempotencyKey()).toBe('00010203-0405-4607-8809-0a0b0c0d0e0f')
+    expect(getRandomValues).toHaveBeenCalledOnce()
   })
 
   it('invalidates the campaign list cache on success', async () => {
