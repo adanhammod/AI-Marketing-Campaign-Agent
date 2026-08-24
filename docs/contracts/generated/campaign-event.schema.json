@@ -17,6 +17,7 @@
         "STATUS_CHANGED",
         "STEP_STARTED",
         "STEP_COMPLETED",
+        "STEP_FAILED",
         "STEP_REUSED",
         "STEP_SKIPPED",
         "RETRY_SCHEDULED",

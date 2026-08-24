@@ -13,14 +13,14 @@ This document is normative for campaign-version status, transition ownership, pr
 | `GENERATING_STORYBOARD` | Non-terminal | Storyboard, scene timing, prompts, and narration planning are active. |
 | `GENERATING_IMAGES` | Non-terminal | Image generation/validation is active. |
 | `RENDERING_VIDEO` | Non-terminal | Composition, render polling, validation, and S3 transfer are active. |
-| `READY_FOR_REVIEW` | Non-terminal, durable pause | All review artifacts are valid and await user action. |
+| `READY_FOR_REVIEW` | Non-terminal, momentary | All review artifacts are valid; the worker durably records this milestone (and its `REVIEW_READY` event) then immediately continues packaging in the same processing pass -- no human action required or awaited. |
 | `REVISION_REQUESTED` | Terminal for the reviewed version | Feedback is frozen; processing continues only in a new child version. |
-| `APPROVED` | Non-terminal, durable handoff | User approved this exact version; final package assembly is pending. |
-| `FINAL` | Terminal | Approved package is valid and available. |
+| `APPROVED` | Legacy, non-terminal | No longer produced by any code path. Reachable only via the standalone `RESUME` SQS operation, kept as a manual escape hatch for a version that was already `READY_FOR_REVIEW`/`APPROVED` before the no-approval-gate behavior shipped. |
+| `FINAL` | Terminal | Package is valid and available. Reached automatically -- no human approval step. |
 | `FAILED` | Terminal until explicit retry | Durable sanitized failure is recorded. |
 | `CANCELLED` | Terminal | User cancellation is durable; late provider results cannot advance state. |
 
-`APPROVED` and `FINAL` are separate because approval is a user decision, while finalization is a system operation that validates and packages the approved artifacts. Packaging can fail without invalidating the approval record.
+There is no human approval gate. `READY_FOR_REVIEW` is still recorded as a durable audit milestone (its own event fires), but the worker advances straight to packaging and `FINAL` within the same message-processing pass, with no external trigger in between. `APPROVED` is retained in the enum only for backward compatibility with data/messages that predate this change; nothing in the current API or worker code produces it.
 
 ## Allowed Transitions
 
@@ -33,9 +33,10 @@ This document is normative for campaign-version status, transition ownership, pr
 | `QUEUED` | First applicable generation state | LangGraph worker | No | Yes |
 | Any generation state | Next applicable generation state | LangGraph worker | No | Yes |
 | `RENDERING_VIDEO` | `READY_FOR_REVIEW` | LangGraph worker | No | Yes |
-| `READY_FOR_REVIEW` | `APPROVED` | FastAPI | Approve exact version | No |
+| `READY_FOR_REVIEW` | `FINAL` | LangGraph worker, same processing pass, no external trigger | No | Yes |
 | `READY_FOR_REVIEW` | `REVISION_REQUESTED` | FastAPI | Submit revision | No |
-| `APPROVED` | `FINAL` | LangGraph worker | No | Yes |
+| `FINAL` | new child `QUEUED` version (parent `FINAL` version itself never rewritten) | FastAPI | Submit revision | No |
+| `APPROVED` (legacy) | `FINAL` | LangGraph worker, via standalone `RESUME` | No | Yes |
 | Any active state | `FAILED` | Current transition owner | No | Explicit retry may requeue |
 | `FAILED` | `QUEUED` | FastAPI | Retry | Yes |
 | Any active state except `APPROVED` | `CANCELLED` | FastAPI persists request; worker acknowledges | Cancel | No |
@@ -52,11 +53,11 @@ RENDERING_VIDEO
 
 Completed stages before `earliest_affected_step` are reused from the parent version. Skipped stages emit `STEP_REUSED`, not synthetic generation transitions.
 
-Illegal examples include `CREATED -> FINAL`, `READY_FOR_REVIEW -> FINAL`, `FINAL -> QUEUED`, mutating a `REVISION_REQUESTED` version, and approving a version other than the aggregate’s current version. Conditional writes must reject illegal transitions with `STATE_CONFLICT`.
+Illegal examples include `CREATED -> FINAL`, `FINAL -> QUEUED`, and mutating a `REVISION_REQUESTED` or `FINAL` version's own status/fields (a `FINAL` version is immutable: requesting a revision from `FINAL` creates a new child version and never rewrites the `FINAL` parent's own record). Conditional writes must reject illegal transitions with `STATE_CONFLICT`.
 
 ## Cancellation During MCP Work
 
-FastAPI conditionally sets `cancellation_requested_at` and records `CANCEL_REQUESTED`. If no provider call is active it also sets `CANCELLED`. During an external call, the worker cannot assume remote cancellation is supported. It finishes or times out the call, re-reads the version, discards/quarantines late output, records `LATE_PROVIDER_RESULT_DISCARDED`, releases the lease, and sets `CANCELLED`. A cancelled version never reaches review, approval, or finalization.
+FastAPI conditionally sets `cancellation_requested_at` and records `CANCEL_REQUESTED`. If no provider call is active it also sets `CANCELLED`. During an external call, the worker cannot assume remote cancellation is supported. It finishes or times out the call, re-reads the version, discards/quarantines late output, records `LATE_PROVIDER_RESULT_DISCARDED`, releases the lease, and sets `CANCELLED`. A cancelled version never reaches review or finalization.
 
 ## State Diagram
 
@@ -74,9 +75,8 @@ stateDiagram-v2
   GENERATING_STORYBOARD --> GENERATING_IMAGES
   GENERATING_IMAGES --> RENDERING_VIDEO
   RENDERING_VIDEO --> READY_FOR_REVIEW
-  READY_FOR_REVIEW --> APPROVED
+  READY_FOR_REVIEW --> FINAL
   READY_FOR_REVIEW --> REVISION_REQUESTED
-  APPROVED --> FINAL
   FAILED --> QUEUED
   CREATED --> CANCELLED
   QUEUED --> CANCELLED
@@ -108,7 +108,6 @@ Progress is an estimate, integer `0..100`, and never decreases within a version.
 | `RENDERING_VIDEO` | 75 |
 | Review package valid | 95 |
 | `READY_FOR_REVIEW` | 95 |
-| `APPROVED` | 98 |
 | `FINAL` | 100 |
 
 `FAILED` and `CANCELLED` retain the last value. `REVISION_REQUESTED` retains 95; the new version starts at the progress floor associated with its earliest affected step. Within a stage, progress may interpolate only from durable substep counts.

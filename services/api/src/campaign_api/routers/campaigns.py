@@ -2,8 +2,6 @@ from typing import Annotated
 from uuid import UUID
 
 from campaign_contracts.api import (
-    ApprovalRequest,
-    ApprovalResponse,
     CampaignArtifactsResponse,
     CampaignCreationAcceptedResponse,
     CampaignCreationRequest,
@@ -103,28 +101,6 @@ async def get_campaign_events(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> CampaignEventsResponse:
     return await service.events(campaign_id, cursor, limit)
-
-
-@router.post(
-    "/{campaign_id}/versions/{version}/approve",
-    response_model=ApprovalResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    responses={
-        404: {"model": NotFoundError},
-        409: {"model": ConflictError},
-        422: {"model": StandardValidationError},
-        503: {"model": StandardValidationError},
-    },
-)
-async def approve_campaign(
-    campaign_id: UUID,
-    version: Annotated[int, Path(ge=1)],
-    body: ApprovalRequest,
-    service: Annotated[CampaignService, Depends(get_service)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
-) -> ApprovalResponse:
-    del idempotency_key  # required by the mutation contract; approval identity is the durable record itself
-    return await service.approve(campaign_id, version, body, correlation_id())
 
 
 @router.post(
