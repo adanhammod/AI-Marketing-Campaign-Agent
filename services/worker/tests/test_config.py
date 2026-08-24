@@ -68,7 +68,13 @@ def test_validate_rejects_non_positive_initial_backoff():
 def test_settings_defaults_include_polly_timeout_fields():
     settings = _settings()
     assert settings.polly_connect_timeout_seconds == 10
-    assert settings.polly_read_timeout_seconds == 60
+    assert settings.polly_read_timeout_seconds == 120
+
+
+def test_settings_defaults_include_polly_retry_fields():
+    settings = _settings()
+    assert settings.polly_retry_mode == "standard"
+    assert settings.polly_max_attempts == 2
 
 
 def test_settings_from_env_reads_polly_timeout_overrides(monkeypatch):
@@ -84,11 +90,34 @@ def test_settings_from_env_reads_polly_timeout_overrides(monkeypatch):
     assert settings.polly_read_timeout_seconds == 90
 
 
+def test_settings_from_env_reads_polly_retry_overrides(monkeypatch):
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("SQS_QUEUE_URL", "https://sqs.invalid/q")
+    monkeypatch.setenv("DYNAMODB_TABLE_NAME", "campaign-test")
+    monkeypatch.setenv("AWS_POLLY_RETRY_MODE", "adaptive")
+    monkeypatch.setenv("AWS_POLLY_MAX_ATTEMPTS", "3")
+
+    settings = Settings.from_env()
+
+    assert settings.polly_retry_mode == "adaptive"
+    assert settings.polly_max_attempts == 3
+
+
 def test_validate_rejects_non_positive_polly_timeouts():
     with pytest.raises(ConfigurationError):
         _settings(polly_connect_timeout_seconds=0).validate()
     with pytest.raises(ConfigurationError):
         _settings(polly_read_timeout_seconds=0).validate()
+
+
+def test_validate_rejects_invalid_polly_retry_mode():
+    with pytest.raises(ConfigurationError):
+        _settings(polly_retry_mode="bogus").validate()
+
+
+def test_validate_rejects_non_positive_polly_max_attempts():
+    with pytest.raises(ConfigurationError):
+        _settings(polly_max_attempts=0).validate()
 
 
 def test_settings_defaults_video_renderer_mode_to_ffmpeg():

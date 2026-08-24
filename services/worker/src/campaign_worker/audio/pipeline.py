@@ -1,10 +1,18 @@
+import asyncio
 import hashlib
+import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid5
 from xml.sax.saxutils import escape as xml_escape
 
-from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    BotoCoreError,
+    ClientError,
+    ConnectTimeoutError,
+    ReadTimeoutError,
+)
 from campaign_contracts.artifacts import AudioArtifactReference
 from campaign_contracts.campaign import CampaignVersion
 from campaign_contracts.enums import WorkflowStep
@@ -17,6 +25,8 @@ from campaign_worker.video.ffmpeg_runner import run_ffmpeg, run_ffprobe
 from .normalizer import AudioNormalizer
 from .processor import AudioProcessor
 from .tempo_normalizer import ensure_duration_in_range
+
+_LOG = logging.getLogger(__name__)
 
 MAX_NARRATION_CHARS = 3000
 
@@ -120,7 +130,7 @@ class PollyVoicePipeline:
 
         await self._checkpoint(is_cancelled, "before_polly")
         ssml_text = _build_ssml([scene.narration for scene in storyboard.scenes])
-        audio_bytes = self._synthesize(ssml_text, voice_id)
+        audio_bytes = await self._synthesize_async(version, ssml_text, voice_id)
         normalized_loudness = await self._normalizer.normalize(audio_bytes)
         await self._checkpoint(is_cancelled, "before_validation")
         normalized = self._processor.validate(normalized_loudness.data)
@@ -183,11 +193,53 @@ class PollyVoicePipeline:
             )
         return voice
 
+    async def _synthesize_async(self, version: CampaignVersion, text: str, voice_id: str) -> bytes:
+        started = time.monotonic()
+        try:
+            audio_bytes = await asyncio.to_thread(self._synthesize, text, voice_id)
+        except WorkflowOperationError as exc:
+            _LOG.warning(
+                "polly_synthesis_failed",
+                extra={
+                    "provider": "polly",
+                    "campaign_id": str(version.campaign_id),
+                    "job_id": str(version.job_id),
+                    "workflow_step": WorkflowStep.VOICEOVER.value,
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                    "error_code": exc.code,
+                    "exception_type": type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__,
+                },
+            )
+            raise
+        _LOG.info(
+            "polly_synthesis_succeeded",
+            extra={
+                "provider": "polly",
+                "campaign_id": str(version.campaign_id),
+                "job_id": str(version.job_id),
+                "workflow_step": WorkflowStep.VOICEOVER.value,
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+            },
+        )
+        return audio_bytes
+
     def _synthesize(self, text: str, voice_id: str) -> bytes:
+        stream: Any = None
         try:
             response = self._client.synthesize_speech(
                 Text=text, VoiceId=voice_id, Engine=self._engine, OutputFormat="mp3", TextType="ssml"
             )
+            stream = response["AudioStream"]
+            try:
+                return cast(bytes, stream.read())
+            except BotoCoreError:
+                # Let the outer handlers below classify a stream-read timeout or
+                # network failure the same way as a synthesize_speech() failure.
+                raise
+            except Exception as exc:
+                raise WorkflowOperationError(
+                    "INVALID_PROVIDER_OUTPUT", "Polly returned no audio stream", retryable=True
+                ) from exc
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
             if code == "ThrottlingException":
@@ -215,14 +267,22 @@ class PollyVoicePipeline:
                     "VOICE_PROVIDER_UNAVAILABLE", "Polly rejected the request", retryable=False
                 ) from exc
             raise WorkflowOperationError("VOICE_PROVIDER_UNAVAILABLE", "Polly request failed", retryable=True) from exc
-        except BotoCoreError as exc:
+        except (ReadTimeoutError, ConnectTimeoutError) as exc:
             raise WorkflowOperationError("PROVIDER_TIMEOUT", "Polly request timed out", retryable=True) from exc
-        try:
-            return cast(bytes, response["AudioStream"].read())
-        except Exception as exc:
-            raise WorkflowOperationError(
-                "INVALID_PROVIDER_OUTPUT", "Polly returned no audio stream", retryable=True
-            ) from exc
+        except BotoCoreError as exc:
+            # Covers EndpointConnectionError, ConnectionClosedError, and any other
+            # non-timeout botocore/network failure -- these are real
+            # provider-unavailable conditions, not timeouts, and must not be
+            # reported as PROVIDER_TIMEOUT.
+            raise WorkflowOperationError("VOICE_PROVIDER_UNAVAILABLE", "Polly request failed", retryable=True) from exc
+        finally:
+            if stream is not None:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:  # noqa: BLE001 -- best-effort cleanup, never mask the real error
+                        pass
 
     @staticmethod
     async def _checkpoint(is_cancelled: Callable[[], Awaitable[bool]], phase: str) -> None:

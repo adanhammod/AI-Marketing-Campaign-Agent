@@ -7,7 +7,13 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 from campaign_contracts.api import CampaignCreationRequest
 from campaign_contracts.campaign import CampaignConstraints, CampaignVersion, RetryMetadata, Storyboard, StoryboardScene
 from campaign_contracts.enums import CampaignStatus, WorkflowStep
@@ -578,14 +584,136 @@ async def test_pipeline_maps_throttling_and_auth_and_service_errors():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_maps_timeout_to_provider_timeout():
+async def test_pipeline_maps_read_timeout_to_provider_timeout():
     version = _version()
-    polly = _Polly(error=BotoCoreError())
+    polly = _Polly(error=ReadTimeoutError(endpoint_url="https://polly.us-east-1.amazonaws.com/"))
     pipeline = _pipeline(polly)
     with pytest.raises(WorkflowOperationError) as error:
         await pipeline.acquire(version, _never_cancelled)
     assert error.value.code == "PROVIDER_TIMEOUT"
     assert error.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_maps_connect_timeout_to_provider_timeout():
+    version = _version()
+    polly = _Polly(error=ConnectTimeoutError(endpoint_url="https://polly.us-east-1.amazonaws.com/"))
+    pipeline = _pipeline(polly)
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+    assert error.value.code == "PROVIDER_TIMEOUT"
+    assert error.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_maps_endpoint_connection_error_to_voice_provider_unavailable():
+    version = _version()
+    polly = _Polly(error=EndpointConnectionError(endpoint_url="https://polly.us-east-1.amazonaws.com/"))
+    pipeline = _pipeline(polly)
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+    assert error.value.code == "VOICE_PROVIDER_UNAVAILABLE"
+    assert error.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_maps_generic_botocore_error_to_voice_provider_unavailable_not_timeout():
+    # A generic, non-timeout BotoCoreError must not be mislabeled as a Polly
+    # timeout -- only ReadTimeoutError/ConnectTimeoutError map to PROVIDER_TIMEOUT.
+    version = _version()
+    polly = _Polly(error=BotoCoreError())
+    pipeline = _pipeline(polly)
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+    assert error.value.code == "VOICE_PROVIDER_UNAVAILABLE"
+    assert error.value.code != "PROVIDER_TIMEOUT"
+    assert error.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_maps_audio_stream_read_timeout_to_provider_timeout():
+    version = _version()
+
+    class _TimeoutStream:
+        def read(self):
+            raise ReadTimeoutError(endpoint_url="https://polly.us-east-1.amazonaws.com/")
+
+    class _TimeoutPolly:
+        def synthesize_speech(self, **kwargs):
+            return {"AudioStream": _TimeoutStream()}
+
+    pipeline = _pipeline(_TimeoutPolly())
+    with pytest.raises(WorkflowOperationError) as error:
+        await pipeline.acquire(version, _never_cancelled)
+    assert error.value.code == "PROVIDER_TIMEOUT"
+    assert error.value.retryable is True
+
+
+class _TrackedStream:
+    def __init__(self, audio: bytes = b"", *, read_error: Exception | None = None) -> None:
+        self._audio = audio
+        self._read_error = read_error
+        self.closed = False
+
+    def read(self):
+        if self._read_error:
+            raise self._read_error
+        return self._audio
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_closes_audio_stream_on_success():
+    version = _version()
+    stream = _TrackedStream(_mp3_bytes())
+
+    class _StreamPolly:
+        def synthesize_speech(self, **kwargs):
+            return {"AudioStream": stream}
+
+    pipeline = _pipeline(_StreamPolly())
+    await pipeline.acquire(version, _never_cancelled)
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_closes_audio_stream_on_read_failure():
+    version = _version()
+    stream = _TrackedStream(read_error=OSError("stream closed"))
+
+    class _StreamPolly:
+        def synthesize_speech(self, **kwargs):
+            return {"AudioStream": stream}
+
+    pipeline = _pipeline(_StreamPolly())
+    with pytest.raises(WorkflowOperationError):
+        await pipeline.acquire(version, _never_cancelled)
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_polly_call_does_not_block_event_loop():
+    import time as _time
+
+    class _SlowPolly:
+        def synthesize_speech(self, **kwargs):
+            _time.sleep(0.3)
+            return {"AudioStream": io.BytesIO(_mp3_bytes())}
+
+    version = _version()
+    pipeline = _pipeline(_SlowPolly())
+    ticks = 0
+
+    async def _ticker() -> None:
+        nonlocal ticks
+        for _ in range(30):
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    await asyncio.gather(pipeline.acquire(version, _never_cancelled), _ticker())
+    assert ticks > 5
 
 
 @pytest.mark.asyncio
