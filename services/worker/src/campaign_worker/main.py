@@ -61,15 +61,19 @@ def build_consumer(
         read_timeout=settings.sqs_read_timeout_seconds,
         retries={"max_attempts": 0},
     )
-    # Polly synthesis is a single synchronous call with no inherent expected-wait
-    # like SQS long polling, but a real production timeout (30s, the old shared
-    # read_timeout) was observed on a short (~30 word) narration -- it gets its
-    # own Config with more headroom, isolated from the shared config so
-    # DynamoDB/Bedrock/S3 timeout behavior is unaffected.
+    # Polly synthesis is a single call with no inherent expected-wait like SQS
+    # long polling, but real production timeouts have been observed even on
+    # short (~30 word) narrations -- it gets its own Config with more read
+    # headroom and a small bounded retry budget, isolated from the shared
+    # config so DynamoDB/Bedrock/S3 timeout behavior is unaffected. The
+    # synthesize_speech()/AudioStream call runs via asyncio.to_thread (see
+    # audio/pipeline.py), so a worst-case retry-exhausted duration here doesn't
+    # block the SQS consumer's heartbeat loop from extending the visibility
+    # timeout/lease in the meantime.
     polly_config = Config(
         connect_timeout=settings.polly_connect_timeout_seconds,
         read_timeout=settings.polly_read_timeout_seconds,
-        retries={"max_attempts": 0},
+        retries={"mode": settings.polly_retry_mode, "max_attempts": settings.polly_max_attempts},
     )
     sqs = sqs_client or boto3.client(
         "sqs", region_name=settings.aws_region, endpoint_url=settings.endpoint_url, config=sqs_config
