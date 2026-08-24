@@ -41,7 +41,9 @@ class Settings:
     polly_voice_id: str | None = None
     polly_engine: str = "neural"
     polly_connect_timeout_seconds: float = 10
-    polly_read_timeout_seconds: float = 60
+    polly_read_timeout_seconds: float = 120
+    polly_retry_mode: str = "standard"
+    polly_max_attempts: int = 2
     audio_normalize_timeout_seconds: float = 30
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
@@ -94,6 +96,10 @@ class Settings:
             raise ConfigurationError("SQS receive retry max backoff must be at least the initial backoff")
         if self.polly_connect_timeout_seconds <= 0 or self.polly_read_timeout_seconds <= 0:
             raise ConfigurationError("Polly client timeouts must be positive")
+        if self.polly_retry_mode not in {"legacy", "standard", "adaptive"}:
+            raise ConfigurationError("Polly retry mode must be one of legacy, standard, adaptive")
+        if self.polly_max_attempts < 1:
+            raise ConfigurationError("Polly max attempts must be at least 1")
         if self.endpoint_url and self.environment not in {"local", "test"}:
             raise ConfigurationError("endpoint URL is allowed only for local testing")
         if not 1 <= self.health_port <= 65535:
@@ -186,7 +192,9 @@ class Settings:
             polly_voice_id=os.getenv("POLLY_VOICE_ID"),
             polly_engine=os.getenv("POLLY_ENGINE", "neural"),
             polly_connect_timeout_seconds=float(os.getenv("AWS_POLLY_CONNECT_TIMEOUT_SECONDS", "10")),
-            polly_read_timeout_seconds=float(os.getenv("AWS_POLLY_READ_TIMEOUT_SECONDS", "60")),
+            polly_read_timeout_seconds=float(os.getenv("AWS_POLLY_READ_TIMEOUT_SECONDS", "120")),
+            polly_retry_mode=os.getenv("AWS_POLLY_RETRY_MODE", "standard"),
+            polly_max_attempts=int(os.getenv("AWS_POLLY_MAX_ATTEMPTS", "2")),
             audio_normalize_timeout_seconds=float(os.getenv("AUDIO_NORMALIZE_TIMEOUT_SECONDS", "30")),
             ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg"),
             ffprobe_path=os.getenv("FFPROBE_PATH", "ffprobe"),
