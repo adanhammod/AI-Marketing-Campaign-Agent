@@ -210,7 +210,9 @@ def test_revision_from_final_returns_202_and_creates_version_2(client, repositor
     assert messages[0].operation == SQSOperation.REGENERATE
 
 
-def test_revision_from_final_leaves_the_final_version_completely_unchanged(client, repository, campaign_at_status, headers):
+def test_revision_from_final_leaves_the_final_version_completely_unchanged(
+    client, repository, campaign_at_status, headers
+):
     campaign_id, _ = asyncio.run(campaign_at_status(CampaignStatus.FINAL, strategy=_strategy()))
     before = asyncio.run(repository.get_version(campaign_id, 1))
     assert before is not None
